@@ -12,6 +12,13 @@ jobs:
         with:
           fetch-depth: 0
       - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: 1.50.0
       - run: buf lint
       - run: buf breaking --against '.git#branch=main'
-      - run: buf generate --validate-only
+      # buf 1.x has no `generate --validate-only` (buf v2 only).
+      # `buf build` validates the module compiles without needing
+      # protoc plugins. Full codegen drift check stays local per README:
+      # `buf generate` (needs protoc-gen-go, protoc-gen-connect-go,
+      # protoc-gen-es, protoc-gen-connect-es on PATH) + `git diff --exit-code -- gen/`.
+      - run: buf build
