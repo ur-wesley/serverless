@@ -9,18 +9,18 @@ export default function QueuePanel() {
   async function publish() {
     setOut("publishing…");
     try {
-      const res = await fetch(`/pub/${encodeURIComponent(topic())}`, {
+      const res = await fetch(`api/pub/${encodeURIComponent(topic())}`, {
         method: "POST",
         body: msg(),
       });
-      setOut(`POST /pub/${topic()} -> ${res.status} ${res.statusText}\ncheck the logs tab for delivery.`);
+      setOut(`POST api/pub/${topic()} -> ${res.status} ${res.statusText}\ncheck the logs tab for delivery.`);
     } catch (e) {
       setOut(`error: ${e}`);
     }
   }
   async function subscribers() {
     try {
-      const fns = await getJSON<FnInfo[]>("/functions");
+      const fns = await getJSON<FnInfo[]>("api/functions");
       setOut(`known functions: ${fns.map((f) => f.Name).join(", ")}\n(echo subscribes to orders.created)`);
     } catch (e) {
       setOut(`error: ${e}`);

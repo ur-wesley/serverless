@@ -24,3 +24,26 @@ go run ./cmd/actions --url https://svr.w4y.io deploy --dir .
 go run ./cmd/actions --url https://svr.w4y.io invoke ui/
 # open https://svr.w4y.io/f/ui/
 ```
+
+## Intercom (opt-in cross-function access)
+
+The dashboard reads other functions through its own handler — the browser
+never holds an operator token. `main.go` proxies `/api/*` via the sidecar
+with `ACTIONS_SIDECAR_TOKEN`:
+
+* `GET api/functions` → `POST /sidecar/functions/list` (own functions)
+* `GET api/logs?fn=` → `POST /sidecar/logs/tail` (needs `allow_logs`)
+* `POST api/pub/:topic` → `POST /sidecar/queue/publish`
+* `POST api/invoke/:fn` → `POST /sidecar/invoke` (needs `allow_invoke`)
+
+`actions.toml` opts in (default deny, same-owner only, `"*"` = all own):
+
+```toml
+allow_logs = ["*"]
+allow_invoke = ["*"]
+allow_kv = ["*"]
+allow_blobs = ["*"]
+```
+
+Cross-owner is always 403, even with `"*"`. KV/blob sharing uses the same
+`allow_kv` / `allow_blobs` lists.

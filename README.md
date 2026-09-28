@@ -3,6 +3,19 @@
 Any language that compiles to a Linux binary runs if it speaks the ABI:
 `GET /healthz` → 200, `POST /invoke` (`{event, ctx}` protojson) → `{status, headers, body}`.
 
+## Install (prebuilt CLI)
+
+```sh
+npm i -g @ur-wesley/serverless
+actions --help
+```
+
+Ships `linux/x64`, `macOS Apple Silicon (arm64)`, `windows/x64` binaries from
+the `v<version>` GitHub Release. Other platforms: `go build -o actions ./cmd/actions`.
+Releases are cut by pushing a `v*` tag matching root `package.json`
+(`.github/workflows/release-cli.yml` builds, publishes the release, and
+auto-publishes the npm wrapper).
+
 ## Quickstart (dev on Docker host)
 
 ```sh
@@ -13,11 +26,19 @@ go run ./cmd/actions login
 # 3. Run control plane (needs Docker; NATS optional — falls back to memory bus)
 go run ./cmd/controlplane
 # 4. Deploy / call / list (URL + token come from the saved login)
-go run ./cmd/actions deploy --dir ./hello
+go run ./cmd/actions deploy --dir ./hello   # enqueues, streams build log, waits
+go run ./cmd/actions deploy --dir ./hello --no-wait  # enqueue only
+go run ./cmd/actions jobs hello             # deploy history + build status
 go run ./cmd/actions invoke -d ping hello/hi
 go run ./cmd/actions ls
 go run ./cmd/actions logs hello
 ```
+
+Versions are semver: first deploy is `0.1.0`, then patch auto-bumps.
+Pin with `actions.toml: version = "1.2.3"` or `bump = "major"|"minor"|"patch"`
+(mutually exclusive); explicit versions must exceed the active one.
+`GET /versions?fn=`, `POST /rollback`, `GET /deploys?fn=` / `GET /deploys/:id[/logs]`
+cover history, rollback, and build logs.
 
 Auth: `login` asks for the control plane URL, prints a verification link
 (`open it in a browser; the first visit creates the first account, later

@@ -4,3 +4,8 @@ route = "/f/ui"
 timeout_ms = 10000
 memory_mb = 256
 allow_egress = false
+# Intercom: dashboard may read other own functions when deployer allows it.
+allow_logs = ["*"]
+allow_invoke = ["*"]
+allow_kv = ["*"]
+allow_blobs = ["*"]
