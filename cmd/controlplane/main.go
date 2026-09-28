@@ -187,22 +187,59 @@ func main() {
 // logSelfInspect shells out to `docker inspect` on our own container (docker.sock
 // is mounted) and logs labels + networks. Temporary diagnostic for Traefik routing.
 func logSelfInspect() {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	hn, _ := os.Hostname()
 	out, err := exec.CommandContext(ctx, "docker", "inspect", hn, "--format",
 		"{{range $k,$v := .NetworkSettings.Networks}}[{{$k}}]{{end}} || {{range $k,$v := .Config.Labels}}{{$k}}={{$v}} ||| {{end}}").CombinedOutput()
 	if err != nil {
 		slog.Warn("self-inspect failed", "err", err, "out", strings.TrimSpace(string(out)))
+	} else {
+		emitChunked("self-inspect-chunk", hn, strings.TrimSpace(string(out)))
+	}
+	// Find traefik container(s) and dump recent relevant log lines.
+	ps, err := exec.CommandContext(ctx, "docker", "ps", "--format", "{{.Names}}|{{.Image}}").CombinedOutput()
+	if err != nil {
+		slog.Warn("docker ps failed", "err", err)
 		return
 	}
-	s := strings.TrimSpace(string(out))
+	emitChunked("docker-ps", hn, strings.TrimSpace(string(ps)))
+	for _, line := range strings.Split(strings.TrimSpace(string(ps)), "\n") {
+		name := strings.SplitN(line, "|", 2)[0]
+		if !strings.Contains(strings.ToLower(line), "traefik") {
+			continue
+		}
+		lg, err := exec.CommandContext(ctx, "docker", "logs", "--tail", "200", name).CombinedOutput()
+		if err != nil {
+			slog.Warn("traefik logs failed", "container", name, "err", err)
+			continue
+		}
+		var hits []string
+		for _, l := range strings.Split(string(lg), "\n") {
+			ll := strings.ToLower(l)
+			if strings.Contains(ll, "serverless") || strings.Contains(ll, "svr.w4y.io") ||
+				strings.Contains(ll, "error") || strings.Contains(ll, "ERR") {
+				hits = append(hits, l)
+			}
+		}
+		if len(hits) > 30 {
+			hits = hits[len(hits)-30:]
+		}
+		emitChunked("traefik-log-"+name, hn, strings.Join(hits, "\n"))
+	}
+}
+
+func emitChunked(msg, hn, s string) {
+	if s == "" {
+		slog.Info(msg, "hostname", hn, "detail", "(empty)")
+		return
+	}
 	for len(s) > 0 {
 		chunk := s
 		if len(chunk) > 2500 {
 			chunk = chunk[:2500]
 		}
-		slog.Info("self-inspect-chunk", "hostname", hn, "detail", chunk)
+		slog.Info(msg, "hostname", hn, "detail", chunk)
 		s = s[len(chunk):]
 	}
 }
