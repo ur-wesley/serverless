@@ -1,0 +1,27 @@
+{
+  "name": "@ur-wesley/serverless",
+  "version": "0.1.0",
+  "description": "Serverless binary platform CLI — installs the prebuilt actions binary for your platform from GitHub Releases.",
+  "license": "MIT",
+  "bin": {
+    "actions": "./bin/actions.js"
+  },
+  "scripts": {
+    "postinstall": "node ./install.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "install.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ur-wesley/serverless.git",
+    "directory": "npm"
+  },
+  "homepage": "https://github.com/ur-wesley/serverless#readme"
+}

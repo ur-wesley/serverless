@@ -9,9 +9,11 @@ services:
       PORT: "8080"
       NATS_URL: "nats://nats:4222"
       RUSTFS_ENDPOINT: "http://rustfs:9000"
-      RUSTFS_ACCESS_KEY: "minioadmin"
-      RUSTFS_SECRET_KEY: "minioadmin"
+      RUSTFS_ACCESS_KEY: "${RUSTFS_ACCESS_KEY:-minioadmin}"
+      RUSTFS_SECRET_KEY: "${RUSTFS_SECRET_KEY:-minioadmin}"
       SQLITE_PATH: "/data/actions.db"
+      # NOTE: ARTIFACTS_DIR is only used when RUSTFS_ENDPOINT is unset
+      # (local-dir backend). With RustFS set, bundles/blobs live in S3.
       ARTIFACTS_DIR: "/data/bundles"
       RUNNER_NETWORK: "actions-net"
       RUNNER_SANDBOX_NET: "actions-sandbox"

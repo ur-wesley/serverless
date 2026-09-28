@@ -1,0 +1,125 @@
+name: release-cli
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            asset: serverless-linux-x64
+          - goos: darwin
+            goarch: arm64
+            asset: serverless-darwin-arm64
+          - goos: windows
+            goarch: amd64
+            asset: serverless-win-x64.exe
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache: true
+
+      - name: Check version matches tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          echo "package.json version: $PKG_VERSION"
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            if [[ "$TAG_VERSION" != "$PKG_VERSION" ]]; then
+              echo "::error::Tag v$TAG_VERSION != package.json $PKG_VERSION. Bump package.json (source of truth) and retag."
+              exit 1
+            fi
+          fi
+          # internal/version embeds a synced copy of the root package.json.
+          if ! cmp -s package.json internal/version/package.json; then
+            echo "::error::internal/version/package.json drifted from root package.json. Run: go generate ./internal/version/ (or copy root package.json over it) and commit."
+            exit 1
+          fi
+
+      - name: Build CLI (${{ matrix.goos }}/${{ matrix.goarch }})
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          go test ./internal/version/ ./internal/cli/ 2>/dev/null || go test ./internal/version/
+          go build -trimpath -ldflags "-s -w" -o "dist/${{ matrix.asset }}" ./cmd/actions
+          ls -la dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    # Publish to GitHub Releases + npm only on version tags.
+    # workflow_dispatch runs build above as a dry-run without publishing.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cli-*
+          merge-multiple: true
+          path: dist/
+
+      - name: Checksums + sync npm version
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x dist/serverless-linux-x64 dist/serverless-darwin-arm64 || true
+          (cd dist && sha256sum serverless-linux-x64 serverless-darwin-arm64 serverless-win-x64.exe > CHECKSUMS.txt)
+          cat dist/CHECKSUMS.txt
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          npm --prefix npm version "$PKG_VERSION" --no-git-tag-version --allow-same-version
+          echo "npm package version: $(node -p "require('./npm/package.json').version")"
+          test "$(node -p "require('./npm/package.json').version")" = "$PKG_VERSION"
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/serverless-linux-x64
+            dist/serverless-darwin-arm64
+            dist/serverless-win-x64.exe
+            dist/CHECKSUMS.txt
+          generate_release_notes: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Publish @ur-wesley/serverless to npm
+        working-directory: npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
