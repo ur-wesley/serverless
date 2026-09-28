@@ -70,16 +70,31 @@ func ClearAuth() error {
 	return nil
 }
 
-// ResolveURL picks flag > env > saved > default.
+// NormalizeURL respects an explicit scheme (http:// or https://) and
+// defaults bare hostnames to https://. Trailing slashes are trimmed.
+func NormalizeURL(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimSuffix(s, "/")
+	if s == "" {
+		return ""
+	}
+	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return s
+	}
+	return "https://" + s
+}
+
+// ResolveURL picks flag > env > saved > default, normalizing the scheme.
 func ResolveURL(flag string) string {
 	if flag != "" {
-		return strings.TrimSuffix(flag, "/")
+		return NormalizeURL(flag)
 	}
 	if v := os.Getenv("ACTIONS_URL"); v != "" {
-		return strings.TrimSuffix(v, "/")
+		return NormalizeURL(v)
 	}
 	if a, err := LoadAuth(); err == nil && a.URL != "" {
-		return strings.TrimSuffix(a.URL, "/")
+		return NormalizeURL(a.URL)
 	}
 	return "http://localhost:8080"
 }

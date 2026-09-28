@@ -112,7 +112,7 @@ func cmdLogin(args []string) error {
 	url := cli.ResolveURL(*urlFlag)
 	fmt.Printf("control plane URL [%s]: ", url)
 	if line, err := cli.Prompt(""); err == nil && strings.TrimSpace(line) != "" {
-		url = strings.TrimSuffix(strings.TrimSpace(line), "/")
+		url = cli.NormalizeURL(line)
 	}
 	fmt.Println("contacting", url, "...")
 	host, _ := os.Hostname()
@@ -187,7 +187,7 @@ func cmdConfig(args []string) error {
 		return nil
 	}
 	if args[0] == "set" && len(args) == 3 && args[1] == "url" {
-		url := strings.TrimSuffix(args[2], "/")
+		url := cli.NormalizeURL(args[2])
 		a, _ := cli.LoadAuth()
 		a.URL = url
 		return cli.SaveAuth(a)

@@ -6,19 +6,32 @@
 package store
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
-	_ "embed"
+	"embed"
 	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 )
 
 //go:embed schema.sql
 var schemaSQL string
+
+//go:embed migrations/*.sql
+var embedMigrations embed.FS
+
+func init() {
+	goose.SetBaseFS(embedMigrations)
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		panic(err)
+	}
+	goose.SetLogger(goose.NopLogger())
+}
 
 type Function struct {
 	Name          string
@@ -82,6 +95,20 @@ func newID(n int) string {
 	return hex.EncodeToString(b)
 }
 
+// newSlug mints an 8-char public slug (same alphabet as auth.NewSlug).
+func newSlug() (string, error) {
+	const alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
+	raw := make([]byte, 8)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	var b [8]byte
+	for i, v := range raw {
+		b[i] = alphabet[int(v)%len(alphabet)]
+	}
+	return string(b[:]), nil
+}
+
 func Open(path string) (*Store, error) {
 	if path == "" {
 		path = "actions.db"
@@ -94,28 +121,114 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("wal: %w", err)
 	}
-	if _, err := db.Exec(schemaSQL); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate: %w", err)
-	}
 	s := &Store{db: db}
-	s.ensureColumns()
+	if err := s.migrate(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return s, nil
 }
 
-// ensureColumns backfills new columns/indexes on pre-existing DBs.
-func (s *Store) ensureColumns() {
-	for _, stmt := range []string{
-		`ALTER TABLE functions ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE functions ADD COLUMN slug TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE functions ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'public'`,
-		`ALTER TABLE versions ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_functions_slug ON functions(slug) WHERE slug != ''`,
-		`CREATE INDEX IF NOT EXISTS idx_functions_owner ON functions(owner_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_api_keys_fn ON api_keys(owner_id, fn_name)`,
-	} {
-		_, _ = s.db.Exec(stmt) // ignore duplicate-column errors
+// migrate brings the database to the current version with goose
+// (internal/store/migrations/*.sql, embedded). Fresh databases apply all
+// migrations; legacy pre-goose databases are baselined first (see below).
+func (s *Store) migrate() error {
+	if err := s.baselineLegacy(); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	if err := goose.Up(s.db, "migrations"); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	s.backfillSlugs()
+	return nil
+}
+
+// baselineLegacy handles databases created before goose was introduced
+// (no goose_db_version table):
+//   - true legacy (old tables, no slug column): nothing to stamp; goose.Up
+//     runs 00001 as a no-op (IF NOT EXISTS) and applies 00002.
+//   - already migrated by the previous hand-rolled code (slug column
+//     present): stamp version 2 so goose does not re-run the ALTERs.
+func (s *Store) baselineLegacy() error {
+	var name string
+	if err := s.db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'functions'`,
+	).Scan(&name); err != nil {
+		return nil // fresh database; goose.Up applies everything
+	}
+	var verTable string
+	if err := s.db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&verTable); err == nil {
+		return nil // already goose-managed
+	}
+	if _, err := goose.EnsureDBVersionContext(context.Background(), s.db); err != nil {
+		return err
+	}
+	if !hasColumn(s.db, "functions", "slug") {
+		return nil // true legacy; let goose.Up apply 00001 (no-op) + 00002
+	}
+	// Mark 00001+00002 applied: 00001 is a no-op on existing tables and the
+	// ALTERs/indexes of 00002 are already in place. Both rows are needed —
+	// goose refuses gaps before the current version.
+	for _, v := range []int64{1, 2} {
+		if _, err := s.db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (?, 1)`, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func hasColumn(db *sql.DB, table, column string) bool {
+	rows, err := db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			continue
+		}
+		if name == column {
+			return true
+		}
+	}
+	return false
+}
+
+// backfillSlugs assigns random slugs to legacy functions that predate the
+// slug column (stored as ”), so /s/<slug> works for them too.
+func (s *Store) backfillSlugs() {
+	rows, err := s.db.Query(`SELECT name FROM functions WHERE slug = '' OR slug IS NULL`)
+	if err != nil {
+		return
+	}
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err == nil {
+			names = append(names, n)
+		}
+	}
+	rows.Close()
+	for _, n := range names {
+		for i := 0; i < 5; i++ {
+			slug, err := newSlug()
+			if err != nil {
+				break
+			}
+			if _, err := s.db.Exec(`UPDATE functions SET slug = ? WHERE name = ? AND (slug = '' OR slug IS NULL)`, slug, n); err != nil {
+				break
+			}
+			var count int
+			if err := s.db.QueryRow(`SELECT COUNT(*) FROM functions WHERE slug = ?`, slug).Scan(&count); err == nil && count == 1 {
+				break
+			}
+		}
 	}
 }
 

@@ -1,25 +1,7 @@
--- Snapshot of the current schema (migrations in internal/store/migrations/ are the source of truth).
-CREATE TABLE IF NOT EXISTS functions (
-  name TEXT PRIMARY KEY,
-  active_version TEXT NOT NULL DEFAULT '',
-  config_toml TEXT NOT NULL DEFAULT '',
-  owner_id TEXT NOT NULL DEFAULT '',
-  slug TEXT NOT NULL DEFAULT '',
-  auth_mode TEXT NOT NULL DEFAULT 'public'
-);
+-- Operator auth (users/sessions/device login) + per-function API keys +
+-- user-scoped function identity (owner_id/slug/auth_mode).
 
-CREATE TABLE IF NOT EXISTS versions (
-  name TEXT NOT NULL,
-  ver TEXT NOT NULL,
-  sha256 TEXT NOT NULL,
-  handler_key TEXT NOT NULL,
-  config_json TEXT NOT NULL DEFAULT '{}',
-  status TEXT NOT NULL DEFAULT 'queued',
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-  owner_id TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY (name, ver)
-);
-
+-- +goose Up
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
@@ -57,7 +39,22 @@ CREATE TABLE IF NOT EXISTS api_keys (
   last_used_at TEXT NOT NULL DEFAULT ''
 );
 
+ALTER TABLE functions ADD COLUMN owner_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE functions ADD COLUMN slug TEXT NOT NULL DEFAULT '';
+ALTER TABLE functions ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'public';
+ALTER TABLE versions ADD COLUMN owner_id TEXT NOT NULL DEFAULT '';
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_functions_slug ON functions(slug) WHERE slug != '';
 CREATE INDEX IF NOT EXISTS idx_functions_owner ON functions(owner_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_fn ON api_keys(owner_id, fn_name);
+
+-- +goose Down
+DROP INDEX IF EXISTS idx_api_keys_fn;
+DROP INDEX IF EXISTS idx_sessions_user;
+DROP INDEX IF EXISTS idx_functions_slug;
+DROP INDEX IF EXISTS idx_functions_owner;
+DROP TABLE IF EXISTS api_keys;
+DROP TABLE IF EXISTS device_codes;
+DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS users;

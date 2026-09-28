@@ -1,3 +1,4 @@
+-- Snapshot of the current schema (migrations in internal/store/migrations/ are the source of truth).
 CREATE TABLE IF NOT EXISTS functions (
   name TEXT PRIMARY KEY,
   active_version TEXT NOT NULL DEFAULT '',
