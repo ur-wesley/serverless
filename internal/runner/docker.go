@@ -63,17 +63,19 @@ type InstanceStatus struct {
 func (r *DockerRunner) Status() []InstanceStatus {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := make([]InstanceStatus, 0, len(r.instances))
-	for k, inst := range r.instances {
+	var out []InstanceStatus
+	for k, pool := range r.instances {
 		name, ver, image := splitKey(k)
-		out = append(out, InstanceStatus{
-			Name:      name,
-			Version:   ver,
-			Image:     image,
-			Container: shortID(inst.containerID),
-			StartedAt: inst.startedAt,
-			LastUsed:  inst.lastUsed,
-		})
+		for _, inst := range pool {
+			out = append(out, InstanceStatus{
+				Name:      name,
+				Version:   ver,
+				Image:     image,
+				Container: shortID(inst.containerID),
+				StartedAt: inst.startedAt,
+				LastUsed:  inst.lastUsed,
+			})
+		}
 	}
 	return out
 }
@@ -85,17 +87,33 @@ func splitKey(k string) (name, ver, image string) {
 	return name, ver, image
 }
 
+// MaxPerFunction caps warm containers per function version (concurrency N).
+const MaxPerFunction = 4
+
 type DockerRunner struct {
 	cfg Config
 
 	mu        sync.Mutex
-	instances map[string]*instance
+	instances map[string][]*instance
 	starting  map[string]chan struct{} // single-flight cold starts per function key
 
 	useRunsc *bool // nil = unprobed; probed lazily, falls back on unknown runtime
 
 	client   *http.Client
 	reapStop chan struct{}
+
+	invokes    uint64
+	coldStarts uint64
+}
+
+func (r *DockerRunner) Metrics() (invokes, coldStarts uint64, warm int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, pool := range r.instances {
+		n += len(pool)
+	}
+	return r.invokes, r.coldStarts, n
 }
 
 func NewDockerRunner(cfg Config) *DockerRunner {
@@ -107,7 +125,7 @@ func NewDockerRunner(cfg Config) *DockerRunner {
 	}
 	r := &DockerRunner{
 		cfg:       cfg,
-		instances: map[string]*instance{},
+		instances: map[string][]*instance{},
 		starting:  map[string]chan struct{}{},
 		client:    &http.Client{},
 		reapStop:  make(chan struct{}),
@@ -224,18 +242,29 @@ func (r *DockerRunner) postInvoke(ctx context.Context, inst *instance, body []by
 	return &out, nil
 }
 
-// ensureInstance returns a warm container or cold-starts one (single-flight).
+// ensureInstance returns a warm container or cold-starts one.
+// Pool: reuse any alive instance (most-recently-used first); cold-start a new
+// one when under MaxPerFunction, otherwise wait for a starter or reuse the
+// freshest even if busy (handlers serve concurrent /invoke over HTTP).
 func (r *DockerRunner) ensureInstance(ctx context.Context, ref FunctionRef) (*instance, error) {
 	k := keyFor(ref)
 	for {
 		r.mu.Lock()
-		if inst, ok := r.instances[k]; ok {
+		pool := r.instances[k]
+		for i := len(pool) - 1; i >= 0; i-- {
+			inst := pool[i]
 			r.mu.Unlock()
 			if r.alive(ctx, inst) {
 				return inst, nil
 			}
 			r.removeInstance(ref, inst)
-			continue
+			r.mu.Lock()
+			pool = r.instances[k]
+		}
+		if len(pool) >= MaxPerFunction {
+			freshest := pool[len(pool)-1]
+			r.mu.Unlock()
+			return freshest, nil
 		}
 		if ch, ok := r.starting[k]; ok {
 			r.mu.Unlock()
@@ -253,7 +282,8 @@ func (r *DockerRunner) ensureInstance(ctx context.Context, ref FunctionRef) (*in
 		inst, err := r.coldStart(ctx, ref)
 		r.mu.Lock()
 		if err == nil {
-			r.instances[k] = inst
+			r.instances[k] = append(r.instances[k], inst)
+			r.coldStarts++
 		}
 		close(ch)
 		delete(r.starting, k)
@@ -278,15 +308,26 @@ func (r *DockerRunner) alive(ctx context.Context, inst *instance) bool {
 func (r *DockerRunner) touch(ref FunctionRef, inst *instance) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if cur, ok := r.instances[keyFor(ref)]; ok && cur == inst {
-		cur.lastUsed = time.Now()
+	r.invokes++
+	for _, cur := range r.instances[keyFor(ref)] {
+		if cur == inst {
+			cur.lastUsed = time.Now()
+			return
+		}
 	}
 }
 
 func (r *DockerRunner) removeInstance(ref FunctionRef, inst *instance) {
 	r.mu.Lock()
-	if cur, ok := r.instances[keyFor(ref)]; ok && cur == inst {
-		delete(r.instances, keyFor(ref))
+	pool := r.instances[keyFor(ref)]
+	for i, cur := range pool {
+		if cur == inst {
+			r.instances[keyFor(ref)] = append(pool[:i], pool[i+1:]...)
+			if len(r.instances[keyFor(ref)]) == 0 {
+				delete(r.instances, keyFor(ref))
+			}
+			break
+		}
 	}
 	r.mu.Unlock()
 	if r.cfg.Tokens != nil && inst.token != "" {
@@ -304,7 +345,7 @@ func (r *DockerRunner) coldStart(ctx context.Context, ref FunctionRef) (*instanc
 	name := "actions-" + sanitize(ref.Name) + "-" + randHex(6)
 	var token string
 	if r.cfg.Tokens != nil {
-		token = r.cfg.Tokens.Mint(ref.Name)
+		token = r.cfg.Tokens.MintWithPolicy(ref.Name, ref.OwnerID, ref.AllowLogs, ref.AllowInvoke, ref.AllowKV, ref.AllowBlobs)
 	}
 	isolated := r.isolated(ref)
 	network := r.cfg.Network
@@ -432,16 +473,21 @@ func (r *DockerRunner) reapLoop() {
 		case <-t.C:
 			now := time.Now()
 			var stale []*instance
-			var keys []string
 			r.mu.Lock()
-			for k, inst := range r.instances {
-				if now.Sub(inst.lastUsed) > IdleTTL {
-					stale = append(stale, inst)
-					keys = append(keys, k)
+			for k, pool := range r.instances {
+				var keep []*instance
+				for _, inst := range pool {
+					if now.Sub(inst.lastUsed) > IdleTTL {
+						stale = append(stale, inst)
+					} else {
+						keep = append(keep, inst)
+					}
 				}
-			}
-			for _, k := range keys {
-				delete(r.instances, k)
+				if len(keep) == 0 {
+					delete(r.instances, k)
+				} else {
+					r.instances[k] = keep
+				}
 			}
 			r.mu.Unlock()
 			for _, inst := range stale {
@@ -460,11 +506,11 @@ func (r *DockerRunner) reapLoop() {
 func (r *DockerRunner) Close() {
 	close(r.reapStop)
 	r.mu.Lock()
-	insts := make([]*instance, 0, len(r.instances))
-	for _, inst := range r.instances {
-		insts = append(insts, inst)
+	var insts []*instance
+	for _, pool := range r.instances {
+		insts = append(insts, pool...)
 	}
-	r.instances = map[string]*instance{}
+	r.instances = map[string][]*instance{}
 	r.mu.Unlock()
 	for _, inst := range insts {
 		_ = r.dockerKill(inst.containerID)

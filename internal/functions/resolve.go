@@ -39,6 +39,7 @@ func refFromStore(fn store.Function, sidecarURL string) Info {
 		Timeout:    10 * time.Second,
 		MemoryMB:   256,
 		SidecarURL: sidecarURL,
+		OwnerID:    fn.OwnerID,
 	}
 	if cfg, err := deploy.ParseConfig(fn.ConfigTOML); err == nil {
 		if cfg.TimeoutMs != 0 {
@@ -48,6 +49,10 @@ func refFromStore(fn store.Function, sidecarURL string) Info {
 			ref.MemoryMB = cfg.MemoryMB
 		}
 		ref.AllowEgress = cfg.AllowEgress
+		ref.AllowLogs = cfg.AllowLogs
+		ref.AllowInvoke = cfg.AllowInvoke
+		ref.AllowKV = cfg.AllowKV
+		ref.AllowBlobs = cfg.AllowBlobs
 	}
 	mode := fn.AuthMode
 	if mode == "" {

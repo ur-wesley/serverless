@@ -10,7 +10,10 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,6 +37,7 @@ type Scheduler struct {
 	cron     *cron.Cron
 	cronKeys map[string]cron.EntryID // "fn\x00spec" -> entry
 	unsubs   map[string]func()       // topic -> unsub (one shared sub per topic)
+	subFns   map[string]string       // topic -> sorted fn list (detect membership change)
 }
 
 func New(st *store.Store, backend runner.Backend, b bus.Bus, helloImage, sidecarURL string) *Scheduler {
@@ -43,6 +47,7 @@ func New(st *store.Store, backend runner.Backend, b bus.Bus, helloImage, sidecar
 		cron:     cron.New(cron.WithChain(cron.SkipIfStillRunning(cron.DiscardLogger))),
 		cronKeys: map[string]cron.EntryID{},
 		unsubs:   map[string]func(){},
+		subFns:   map[string]string{},
 	}
 }
 
@@ -66,6 +71,13 @@ func (s *Scheduler) Stop() {
 		unsub()
 	}
 	s.unsubs = map[string]func(){}
+	s.subFns = map[string]string{}
+}
+
+func sortedCopy(in []string) []string {
+	out := append([]string{}, in...)
+	sort.Strings(out)
+	return out
 }
 
 // Sync reconciles cron entries and queue subscriptions with the registry.
@@ -90,6 +102,9 @@ func (s *Scheduler) Sync() {
 			wantCron[fn.Name+"\x00"+spec] = cronSpec{fn: fn.Name, spec: spec}
 		}
 		for _, topic := range cfg.Queue {
+			if strings.TrimSpace(topic) == "" {
+				continue
+			}
 			wantQueue[topic] = append(wantQueue[topic], fn.Name)
 		}
 	}
@@ -115,25 +130,49 @@ func (s *Scheduler) Sync() {
 		}
 	}
 	for topic, fns := range wantQueue {
-		if _, ok := s.unsubs[topic]; ok {
-			continue
-		}
-		unsub, err := s.bus.Subscribe(topic, func(ctx context.Context, msg []byte) {
-			for _, fn := range fns {
-				s.fireQueue(fn, topic, msg)
+		members := strings.Join(sortedCopy(fns), ",")
+		if unsub, ok := s.unsubs[topic]; ok {
+			if s.subFns[topic] == members {
+				continue
 			}
+			unsub()
+			delete(s.unsubs, topic)
+			delete(s.subFns, topic)
+			slog.Info("queue resubscribing (members changed)", "topic", topic, "fns", fns)
+		}
+		fnsCopy := append([]string{}, fns...)
+		unsub, err := s.bus.Subscribe(topic, func(ctx context.Context, msg []byte) error {
+			var wg sync.WaitGroup
+			errCh := make(chan error, len(fnsCopy))
+			for _, fn := range fnsCopy {
+				wg.Add(1)
+				go func(fn string) {
+					defer wg.Done()
+					if err := s.fireQueue(fn, topic, msg); err != nil {
+						errCh <- err
+					}
+				}(fn)
+			}
+			wg.Wait()
+			close(errCh)
+			for err := range errCh {
+				return err
+			}
+			return nil
 		})
 		if err != nil {
 			slog.Warn("queue subscribe failed", "topic", topic, "err", err)
 			continue
 		}
 		s.unsubs[topic] = unsub
+		s.subFns[topic] = members
 		slog.Info("queue subscribed", "topic", topic, "fns", fns)
 	}
 	for topic, unsub := range s.unsubs {
 		if _, ok := wantQueue[topic]; !ok {
 			unsub()
 			delete(s.unsubs, topic)
+			delete(s.subFns, topic)
 		}
 	}
 }
@@ -144,10 +183,12 @@ type cronSpec struct {
 }
 
 func (s *Scheduler) fireCron(fn string) {
-	ref, ok := functions.Resolve(s.store, fn, s.helloImage, s.sidecarURL)
+	// System trigger: exact registry entry, no dev "hello" fallback.
+	info, ok := functions.ResolveFull(s.store, fn, s.sidecarURL)
 	if !ok {
 		return
 	}
+	ref := info.Ref
 	payload, _ := json.Marshal(invokePayload("CRON", "/cron", nil, nil, ref))
 	ctx, cancel := context.WithTimeout(context.Background(), runner.ClampTimeout(ref.Timeout)+15*time.Second)
 	defer cancel()
@@ -159,20 +200,26 @@ func (s *Scheduler) fireCron(fn string) {
 	slog.Info("cron invoke ok", "fn", fn, "status", resp.Status)
 }
 
-func (s *Scheduler) fireQueue(fn, topic string, msg []byte) {
-	ref, ok := functions.Resolve(s.store, fn, s.helloImage, s.sidecarURL)
+func (s *Scheduler) fireQueue(fn, topic string, msg []byte) error {
+	// System trigger: exact registry entry, no dev "hello" fallback.
+	info, ok := functions.ResolveFull(s.store, fn, s.sidecarURL)
 	if !ok {
-		return
+		return fmt.Errorf("unknown function %q", fn)
 	}
+	ref := info.Ref
 	payload, _ := json.Marshal(invokePayload("QUEUE", "/"+topic, nil, map[string]string{"topic": topic}, ref, msg))
 	ctx, cancel := context.WithTimeout(context.Background(), runner.ClampTimeout(ref.Timeout)+15*time.Second)
 	defer cancel()
 	resp, err := s.backend.Invoke(ctx, ref, payload)
 	if err != nil {
 		slog.Warn("queue invoke failed", "fn", fn, "topic", topic, "err", err)
-		return
+		return err
 	}
 	slog.Info("queue invoke ok", "fn", fn, "topic", topic, "status", resp.Status)
+	if resp.Status >= 500 {
+		return fmt.Errorf("handler %q returned %d", fn, resp.Status)
+	}
+	return nil
 }
 
 func invokePayload(method, path string, headers, query map[string]string, ref runner.FunctionRef, body ...[]byte) map[string]any {

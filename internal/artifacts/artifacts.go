@@ -21,6 +21,7 @@ import (
 type Store interface {
 	Put(ctx context.Context, key string, data []byte) error
 	Get(ctx context.Context, key string) ([]byte, error)
+	Delete(ctx context.Context, key string) error
 }
 
 func BundleKey(name, ver, file string) string {
@@ -70,6 +71,13 @@ func (l *Local) Get(_ context.Context, key string) ([]byte, error) {
 	return os.ReadFile(l.path(key))
 }
 
+func (l *Local) Delete(_ context.Context, key string) error {
+	if err := os.Remove(l.path(key)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // --- S3 (RustFS) ---
 
 type S3 struct {
@@ -117,4 +125,9 @@ func (s *S3) Get(ctx context.Context, key string) ([]byte, error) {
 	}
 	defer out.Body.Close()
 	return io.ReadAll(io.LimitReader(out.Body, 512<<20))
+}
+
+func (s *S3) Delete(ctx context.Context, key string) error {
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &s.bucket, Key: &key})
+	return err
 }

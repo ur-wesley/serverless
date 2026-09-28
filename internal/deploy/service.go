@@ -20,11 +20,14 @@ import (
 	"sync"
 
 	"github.com/BurntSushi/toml"
+	"github.com/robfig/cron/v3"
 
 	"actions/internal/artifacts"
 	"actions/internal/auth"
 	"actions/internal/store"
 )
+
+var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
 type Config struct {
 	Name        string   `toml:"name"`
@@ -36,6 +39,17 @@ type Config struct {
 	AuthMode    string   `toml:"auth_mode"`
 	Cron        []string `toml:"cron"`
 	Queue       []string `toml:"queue"`
+	// Version pins this deploy ("1.2.3"); Bump auto-increments
+	// ("major"|"minor"|"patch", default patch). Mutually exclusive.
+	// Absent both, the server bumps patch. First deploy starts at 0.1.0.
+	Version string `toml:"version"`
+	Bump    string `toml:"bump"`
+	// Intercom: opt-in cross-function access, same-owner only.
+	// "*" = all own functions. Empty = self only (default deny).
+	AllowLogs   []string `toml:"allow_logs"`
+	AllowInvoke []string `toml:"allow_invoke"`
+	AllowKV     []string `toml:"allow_kv"`
+	AllowBlobs  []string `toml:"allow_blobs"`
 }
 
 type Request struct {
@@ -53,9 +67,10 @@ type Result struct {
 	SHA256  string `json:"sha256"`
 }
 
-// BuildFunc compiles srcDir into outImage. ExtractFunc returns /app/handler
-// bytes from a built image. Docker-backed defaults; fakes in tests.
-type BuildFunc func(ctx context.Context, srcDir, runtime, outImage string) error
+// BuildFunc compiles srcDir into outImage, returning the combined build log.
+// ExtractFunc returns /app/handler bytes from a built image.
+// Docker-backed defaults; fakes in tests.
+type BuildFunc func(ctx context.Context, srcDir, runtime, outImage string) (string, error)
 type ExtractFunc func(ctx context.Context, outImage string) ([]byte, error)
 
 type Service struct {
@@ -116,9 +131,9 @@ func Validate(name string, c Config) error {
 		return fmt.Errorf("config name %q != request name %q", c.Name, name)
 	}
 	switch c.Runtime {
-	case "ts", "go", "rust", "zig":
+	case "ts", "go":
 	default:
-		return fmt.Errorf("unsupported runtime %q (want ts|go|rust|zig)", c.Runtime)
+		return fmt.Errorf("unsupported runtime %q (want ts|go — rust|zig builders not shipped yet)", c.Runtime)
 	}
 	if c.TimeoutMs != 0 && (c.TimeoutMs < 1000 || c.TimeoutMs > 60000) {
 		return fmt.Errorf("timeout_ms %d out of range 1000..60000", c.TimeoutMs)
@@ -134,10 +149,53 @@ func Validate(name string, c Config) error {
 	default:
 		return fmt.Errorf("auth_mode %q must be public|key|private", c.AuthMode)
 	}
+	if c.Version != "" && c.Bump != "" {
+		return fmt.Errorf("version and bump are mutually exclusive")
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Bump)) {
+	case "", "major", "minor", "patch":
+	default:
+		return fmt.Errorf("bump %q must be major|minor|patch", c.Bump)
+	}
+	if c.Version != "" {
+		if _, err := ParseVersion(c.Version); err != nil {
+			return err
+		}
+	}
+	for _, spec := range c.Cron {
+		if _, err := cronParser.Parse(spec); err != nil {
+			return fmt.Errorf("cron %q invalid: %v", spec, err)
+		}
+	}
+	for _, t := range c.Queue {
+		if strings.TrimSpace(t) == "" {
+			return fmt.Errorf("queue topic must not be blank")
+		}
+	}
+	for _, entry := range [][]string{c.AllowLogs, c.AllowInvoke, c.AllowKV, c.AllowBlobs} {
+		for _, name := range entry {
+			if name == "" || name == "*" {
+				continue
+			}
+			if err := auth.ValidateFunctionName(name); err != nil {
+				return fmt.Errorf("allow list entry %q: %w", name, err)
+			}
+		}
+	}
 	return nil
 }
 
 func (s *Service) Deploy(ctx context.Context, req Request) (*Result, error) {
+	job, err := s.Enqueue(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return s.Execute(ctx, *job)
+}
+
+// Enqueue validates the deploy, reserves a semver version, stores src.zip
+// and creates a queued job. Fast: no docker calls.
+func (s *Service) Enqueue(ctx context.Context, req Request) (*store.Job, error) {
 	cfg, err := ParseConfig(req.ConfigTOML)
 	if err != nil {
 		return nil, err
@@ -145,40 +203,124 @@ func (s *Service) Deploy(ctx context.Context, req Request) (*Result, error) {
 	if err := Validate(req.Name, cfg); err != nil {
 		return nil, err
 	}
-	m := s.lockFor(req.Name)
-	m.Lock()
-	defer m.Unlock()
-	return s.deployLocked(ctx, req, cfg)
-}
-
-func (s *Service) deployLocked(ctx context.Context, req Request, cfg Config) (*Result, error) {
 	if len(req.SrcZip) == 0 {
 		return nil, fmt.Errorf("src.zip empty")
 	}
-	srcDir, err := unzipToTemp(req.SrcZip)
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(srcDir)
-	if err := checkRuntimeLayout(cfg.Runtime, srcDir); err != nil {
-		return nil, err
-	}
-
-	ver, err := s.Store.NextVersion(req.Name)
+	m := s.lockFor(req.Name)
+	m.Lock()
+	defer m.Unlock()
+	ver, err := s.ResolveVersion(req.Name, cfg)
 	if err != nil {
 		return nil, err
 	}
 	if err := s.Artifacts.Put(ctx, artifacts.BundleKey(req.Name, ver, "src.zip"), req.SrcZip); err != nil {
 		return nil, fmt.Errorf("store src.zip: %w", err)
 	}
+	job, err := s.Store.CreateJob(req.OwnerID, req.Name, req.ConfigTOML, ver)
+	if err != nil {
+		return nil, err
+	}
+	s.appendLog(ctx, job, fmt.Sprintf("queued %s %s", req.Name, ver))
+	return &job, nil
+}
 
-	image := "actions/" + strings.ToLower(req.Name) + ":" + ver
+// Execute runs a queued job to completion (build + activate), recording the
+// build log and the terminal job status. Safe to call from the Worker or
+// directly for the synchronous path.
+func (s *Service) Execute(ctx context.Context, job store.Job) (*Result, error) {
+	m := s.lockFor(job.FnName)
+	m.Lock()
+	defer m.Unlock()
+	return s.executeLocked(ctx, job)
+}
+
+func (s *Service) fail(ctx context.Context, job store.Job, err error) (*Result, error) {
+	msg := err.Error()
+	if len(msg) > 2048 {
+		msg = msg[:2048]
+	}
+	s.appendLog(ctx, job, "FAILED: "+msg)
+	_ = s.Store.UpdateJobStatus(job.ID, store.JobFailed, job.Version, "", "", msg)
+	return nil, err
+}
+
+// ResolveVersion decides the version string for a deploy: explicit `version`
+// (must exceed active), or `bump` applied to active (first deploy: 0.1.0).
+// Callers must hold the per-function deploy lock: the uniqueness check and
+// the later InsertVersion are only ordered under it.
+func (s *Service) ResolveVersion(name string, cfg Config) (string, error) {
+	active := ""
+	if fn, err := s.Store.GetFunction(name); err == nil {
+		active = fn.ActiveVersion
+	}
+	if cfg.Version != "" {
+		req, err := ParseVersion(cfg.Version)
+		if err != nil {
+			return "", err
+		}
+		if active != "" {
+			cur, err := ParseVersion(active)
+			if err != nil {
+				return "", fmt.Errorf("active version %q unparseable: %w", active, err)
+			}
+			if Compare(req, cur) <= 0 {
+				return "", fmt.Errorf("version %s must exceed active %s", req.Raw, cur.Raw)
+			}
+		}
+		if _, err := s.Store.GetVersion(name, req.Raw); err == nil {
+			return "", fmt.Errorf("version %s already exists", req.Raw)
+		}
+		return req.Raw, nil
+	}
+	if active == "" {
+		return "0.1.0", nil
+	}
+	cur, err := ParseVersion(active)
+	if err != nil {
+		return "", fmt.Errorf("active version %q unparseable: %w", active, err)
+	}
+	level := strings.ToLower(strings.TrimSpace(cfg.Bump))
+	if level == "" {
+		level = "patch"
+	}
+	next := cur.Bump(level)
+	if _, err := s.Store.GetVersion(name, next.Raw); err == nil {
+		return "", fmt.Errorf("version %s already exists", next.Raw)
+	}
+	return next.Raw, nil
+}
+
+func (s *Service) executeLocked(ctx context.Context, job store.Job) (*Result, error) {
+	cfg, err := ParseConfig(job.ConfigTOML)
+	if err != nil {
+		return s.fail(ctx, job, err)
+	}
+	ver := job.Version
+	srcZip, err := s.Artifacts.Get(ctx, artifacts.BundleKey(job.FnName, ver, "src.zip"))
+	if err != nil || len(srcZip) == 0 {
+		return s.fail(ctx, job, fmt.Errorf("src.zip missing for %s %s", job.FnName, ver))
+	}
+	srcDir, err := unzipToTemp(srcZip)
+	if err != nil {
+		return s.fail(ctx, job, err)
+	}
+	defer os.RemoveAll(srcDir)
+	if err := checkRuntimeLayout(cfg.Runtime, srcDir); err != nil {
+		return s.fail(ctx, job, err)
+	}
+
+	image := "actions/" + strings.ToLower(job.FnName) + ":" + DockerTagFor(ver)
+	s.appendLog(ctx, job, fmt.Sprintf("building %s (%s) -> %s", job.FnName, cfg.Runtime, image))
 	build := s.Build
 	if build == nil {
 		build = s.dockerBuild
 	}
-	if err := build(ctx, srcDir, cfg.Runtime, image); err != nil {
-		return nil, fmt.Errorf("build: %w", err)
+	out, err := build(ctx, srcDir, cfg.Runtime, image)
+	if out != "" {
+		s.appendLog(ctx, job, out)
+	}
+	if err != nil {
+		return s.fail(ctx, job, fmt.Errorf("build: %w", err))
 	}
 	extract := s.Extract
 	if extract == nil {
@@ -186,15 +328,15 @@ func (s *Service) deployLocked(ctx context.Context, req Request, cfg Config) (*R
 	}
 	handler, err := extract(ctx, image)
 	if err != nil {
-		return nil, fmt.Errorf("extract handler: %w", err)
+		return s.fail(ctx, job, fmt.Errorf("extract handler: %w", err))
 	}
 	sum := sha256.Sum256(handler)
 	sha := hex.EncodeToString(sum[:])
-	if err := s.Artifacts.Put(ctx, artifacts.BundleKey(req.Name, ver, "handler"), handler); err != nil {
-		return nil, fmt.Errorf("store handler: %w", err)
+	if err := s.Artifacts.Put(ctx, artifacts.BundleKey(job.FnName, ver, "handler"), handler); err != nil {
+		return s.fail(ctx, job, fmt.Errorf("store handler: %w", err))
 	}
-	if err := s.Artifacts.Put(ctx, artifacts.BundleKey(req.Name, ver, "sha256"), []byte(sha)); err != nil {
-		return nil, fmt.Errorf("store sha256: %w", err)
+	if err := s.Artifacts.Put(ctx, artifacts.BundleKey(job.FnName, ver, "sha256"), []byte(sha)); err != nil {
+		return s.fail(ctx, job, fmt.Errorf("store sha256: %w", err))
 	}
 	// Persist the image tarball so the runner survives daemon restarts.
 	if s.Build == nil {
@@ -205,24 +347,24 @@ func (s *Service) deployLocked(ctx context.Context, req Request, cfg Config) (*R
 		}
 	}
 	if err := s.Store.InsertVersion(store.Version{
-		Name: req.Name, Ver: ver, SHA256: sha,
-		HandlerKey: artifacts.BundleKey(req.Name, ver, "handler"),
+		Name: job.FnName, Ver: ver, SHA256: sha,
+		HandlerKey: artifacts.BundleKey(job.FnName, ver, "handler"),
 		ConfigJSON: "{}",
 		Status:     "active",
-		OwnerID:    req.OwnerID,
+		OwnerID:    job.OwnerID,
 	}); err != nil {
-		return nil, err
+		return s.fail(ctx, job, err)
 	}
 	mode := auth.NormalizeMode(cfg.AuthMode)
 	slug := ""
-	if existing, err := s.Store.GetFunction(req.Name); err == nil {
+	if existing, err := s.Store.GetFunction(job.FnName); err == nil {
 		slug = existing.Slug
 	}
 	if slug == "" {
 		for i := 0; i < 5; i++ {
 			cand, err := auth.NewSlug()
 			if err != nil {
-				return nil, err
+				return s.fail(ctx, job, err)
 			}
 			if !s.Store.SlugExists(cand) {
 				slug = cand
@@ -230,13 +372,15 @@ func (s *Service) deployLocked(ctx context.Context, req Request, cfg Config) (*R
 			}
 		}
 		if slug == "" {
-			return nil, fmt.Errorf("slug allocation failed")
+			return s.fail(ctx, job, fmt.Errorf("slug allocation failed"))
 		}
 	}
-	if err := s.Store.UpsertFunctionOwned(req.OwnerID, req.Name, ver, req.ConfigTOML, slug, mode); err != nil {
-		return nil, err
+	if err := s.Store.UpsertFunctionOwned(job.OwnerID, job.FnName, ver, job.ConfigTOML, slug, mode); err != nil {
+		return s.fail(ctx, job, err)
 	}
-	return &Result{Name: req.Name, Version: ver, Status: "active", Image: image, SHA256: sha}, nil
+	s.appendLog(ctx, job, fmt.Sprintf("active %s %s sha256=%.12s", job.FnName, ver, sha))
+	_ = s.Store.UpdateJobStatus(job.ID, store.JobActive, ver, image, sha, "")
+	return &Result{Name: job.FnName, Version: ver, Status: "active", Image: image, SHA256: sha}, nil
 }
 
 func unzipToTemp(zipBytes []byte) (string, error) {
@@ -335,17 +479,17 @@ func checkRuntimeLayout(runtime, dir string) error {
 	return nil
 }
 
-func (s *Service) dockerBuild(ctx context.Context, srcDir, runtime, outImage string) error {
+func (s *Service) dockerBuild(ctx context.Context, srcDir, runtime, outImage string) (string, error) {
 	df := filepath.Join(s.buildersDir(), "builder-"+runtime, "Dockerfile")
 	if _, err := os.Stat(df); err != nil {
-		return fmt.Errorf("no builder for runtime %q (%s)", runtime, df)
+		return "", fmt.Errorf("no builder for runtime %q (%s)", runtime, df)
 	}
 	cmd := exec.CommandContext(ctx, "docker", "build", "-f", df, "-t", outImage, srcDir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("docker build: %v: %s", err, strings.TrimSpace(string(out)))
+		return string(out), fmt.Errorf("docker build: %v: %s", err, strings.TrimSpace(string(out)))
 	}
-	return nil
+	return string(out), nil
 }
 
 func dockerExtractHandler(ctx context.Context, outImage string) ([]byte, error) {

@@ -12,10 +12,11 @@ func TestMemoryPubSub(t *testing.T) {
 	defer b.Close()
 	var mu sync.Mutex
 	var got [][]byte
-	unsub, err := b.Subscribe("orders.created", func(_ context.Context, msg []byte) {
+	unsub, err := b.Subscribe("orders.created", func(_ context.Context, msg []byte) error {
 		mu.Lock()
 		got = append(got, msg)
 		mu.Unlock()
+		return nil
 	})
 	if err != nil {
 		t.Fatal(err)

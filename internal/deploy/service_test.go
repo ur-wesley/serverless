@@ -4,8 +4,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"actions/internal/artifacts"
 	"actions/internal/store"
@@ -40,8 +42,8 @@ func testService(t *testing.T) *Service {
 	return &Service{
 		Store:     st,
 		Artifacts: artifacts.NewLocal(t.TempDir()),
-		Build: func(_ context.Context, _, _, _ string) error {
-			return nil // fake: skip docker
+		Build: func(_ context.Context, _, _, _ string) (string, error) {
+			return "fake build log", nil // fake: skip docker
 		},
 		Extract: func(_ context.Context, _ string) ([]byte, error) {
 			return []byte("fake-handler-binary"), nil
@@ -65,30 +67,30 @@ func TestDeployHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Version != "v1" || res.Status != "active" {
+	if res.Version != "0.1.0" || res.Status != "active" {
 		t.Fatalf("res = %+v", res)
 	}
-	if res.Image != "actions/hello:v1" {
+	if res.Image != "actions/hello:0.1.0" {
 		t.Fatalf("image = %q", res.Image)
 	}
 	if len(res.SHA256) != 64 {
 		t.Fatalf("sha = %q", res.SHA256)
 	}
-	got, err := s.Artifacts.Get(context.Background(), "bundles/hello/v1/src.zip")
+	got, err := s.Artifacts.Get(context.Background(), "bundles/hello/0.1.0/src.zip")
 	if err != nil || len(got) == 0 {
 		t.Fatalf("src.zip not stored: %v", err)
 	}
 	fn, err := s.Store.GetFunction("hello")
-	if err != nil || fn.ActiveVersion != "v1" {
+	if err != nil || fn.ActiveVersion != "0.1.0" {
 		t.Fatalf("fn = %+v, err = %v", fn, err)
 	}
-	// Second deploy bumps the version.
+	// Second deploy bumps patch.
 	res2, err := s.Deploy(context.Background(), Request{Name: "hello", ConfigTOML: goodTOML, SrcZip: src})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res2.Version != "v2" {
-		t.Fatalf("second ver = %q, want v2", res2.Version)
+	if res2.Version != "0.1.1" {
+		t.Fatalf("second ver = %q, want 0.1.1", res2.Version)
 	}
 }
 
@@ -117,6 +119,72 @@ func TestCronTableHint(t *testing.T) {
 	_, err := ParseConfig("name=\"x\"\nruntime=\"go\"\n[[cron]] = \"*/5 * * * *\"\n")
 	if err == nil || !strings.Contains(err.Error(), "cron = [") {
 		t.Fatalf("hint: %v", err)
+	}
+}
+
+func TestValidateCronSpec(t *testing.T) {
+	bad := Config{Name: "hello", Runtime: "go", Cron: []string{"not a cron"}}
+	if err := Validate("hello", bad); err == nil {
+		t.Fatal("bad cron should fail validation")
+	}
+	good := Config{Name: "hello", Runtime: "go", Cron: []string{"*/5 * * * *"}}
+	if err := Validate("hello", good); err != nil {
+		t.Fatalf("good cron rejected: %v", err)
+	}
+}
+
+func TestEnqueueExecuteWorker(t *testing.T) {
+	s := testService(t)
+	src := makeZip(t, map[string]string{"go.mod": "module hello\n"})
+	job, err := s.Enqueue(context.Background(), Request{Name: "hello", ConfigTOML: goodTOML, SrcZip: src})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "queued" || job.Version != "0.1.0" {
+		t.Fatalf("job = %+v", job)
+	}
+	activated := make(chan string, 1)
+	w := &Worker{Svc: s, Poll: 10 * time.Millisecond,
+		OnActivated: func(fn string) { activated <- fn }}
+	w.Start()
+	defer w.Stop()
+	select {
+	case fn := <-activated:
+		if fn != "hello" {
+			t.Fatalf("activated = %q", fn)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker never activated the job")
+	}
+	got, err := s.Store.GetJob(job.ID)
+	if err != nil || got.Status != "active" {
+		t.Fatalf("job = %+v, err = %v", got, err)
+	}
+	if got.Image != "actions/hello:0.1.0" || got.SHA256 == "" {
+		t.Fatalf("job = %+v", got)
+	}
+	logBytes, err := s.Artifacts.Get(context.Background(), BuildLogKey(job.ID))
+	if err != nil || !strings.Contains(string(logBytes), "fake build log") {
+		t.Fatalf("build log missing: %v %q", err, logBytes)
+	}
+}
+
+func TestExecuteBuildFailure(t *testing.T) {
+	s := testService(t)
+	s.Build = func(_ context.Context, _, _, _ string) (string, error) {
+		return "log line", fmt.Errorf("docker exploded")
+	}
+	src := makeZip(t, map[string]string{"go.mod": "module hello\n"})
+	job, err := s.Enqueue(context.Background(), Request{Name: "hello", ConfigTOML: goodTOML, SrcZip: src})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Execute(context.Background(), *job); err == nil {
+		t.Fatal("expected build error")
+	}
+	got, _ := s.Store.GetJob(job.ID)
+	if got.Status != "failed" || !strings.Contains(got.Error, "docker exploded") {
+		t.Fatalf("job = %+v", got)
 	}
 }
 

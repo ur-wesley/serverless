@@ -18,7 +18,7 @@ import (
 
 type Bus interface {
 	Publish(ctx context.Context, topic string, msg []byte) error
-	Subscribe(topic string, fn func(ctx context.Context, msg []byte)) (unsub func(), err error)
+	Subscribe(topic string, fn func(ctx context.Context, msg []byte) error) (unsub func(), err error)
 	Close()
 }
 
@@ -91,7 +91,7 @@ func (n *natsBus) Publish(ctx context.Context, topic string, msg []byte) error {
 	return err
 }
 
-func (n *natsBus) Subscribe(topic string, fn func(ctx context.Context, msg []byte)) (func(), error) {
+func (n *natsBus) Subscribe(topic string, fn func(ctx context.Context, msg []byte) error) (func(), error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	// Stable durable name per topic: restarts/resyncs resume from the last
@@ -106,7 +106,11 @@ func (n *natsBus) Subscribe(topic string, fn func(ctx context.Context, msg []byt
 		return nil, err
 	}
 	cc, err := cons.Consume(func(m jetstream.Msg) {
-		fn(context.Background(), m.Data())
+		if err := fn(context.Background(), m.Data()); err != nil {
+			slog.Warn("queue handler failed, nacking for redelivery", "topic", topic, "err", err)
+			_ = m.Nak()
+			return
+		}
 		_ = m.Ack()
 	})
 	if err != nil {
@@ -131,22 +135,26 @@ func (n *natsBus) Close() {
 
 type memBus struct {
 	mu   sync.RWMutex
-	subs map[string][]func(ctx context.Context, msg []byte)
+	subs map[string][]func(ctx context.Context, msg []byte) error
 }
 
-func NewMemory() Bus { return &memBus{subs: map[string][]func(context.Context, []byte){}} }
+func NewMemory() Bus { return &memBus{subs: map[string][]func(context.Context, []byte) error{}} }
 
 func (m *memBus) Publish(ctx context.Context, topic string, msg []byte) error {
 	m.mu.RLock()
-	fns := append([]func(context.Context, []byte){}, m.subs[topic]...)
+	fns := append([]func(context.Context, []byte) error{}, m.subs[topic]...)
 	m.mu.RUnlock()
 	for _, fn := range fns {
-		go fn(ctx, msg)
+		go func() {
+			if err := fn(ctx, msg); err != nil {
+				slog.Warn("queue handler failed", "topic", topic, "err", err)
+			}
+		}()
 	}
 	return nil
 }
 
-func (m *memBus) Subscribe(topic string, fn func(ctx context.Context, msg []byte)) (func(), error) {
+func (m *memBus) Subscribe(topic string, fn func(ctx context.Context, msg []byte) error) (func(), error) {
 	m.mu.Lock()
 	m.subs[topic] = append(m.subs[topic], fn)
 	idx := len(m.subs[topic]) - 1

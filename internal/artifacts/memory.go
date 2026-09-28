@@ -29,6 +29,13 @@ func (m *MemStore) Get(_ context.Context, key string) ([]byte, error) {
 	return append([]byte{}, v...), nil
 }
 
+func (m *MemStore) Delete(_ context.Context, key string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.data, key)
+	return nil
+}
+
 type notFoundError struct{ key string }
 
 func (e *notFoundError) Error() string { return "not found: " + e.key }

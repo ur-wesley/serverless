@@ -22,6 +22,11 @@ type FunctionRef struct {
 	MemoryMB     int
 	AllowEgress  bool
 	SidecarURL   string
+	OwnerID      string
+	AllowLogs    []string
+	AllowInvoke  []string
+	AllowKV      []string
+	AllowBlobs   []string
 }
 
 // InvokeResponse mirrors InvokeResponse protojson: body is base64 on the wire.
@@ -54,6 +59,7 @@ type Config struct {
 	// Tokens mints per-instance sidecar credentials (nil = none).
 	Tokens interface {
 		Mint(fn string) string
+		MintWithPolicy(fn, ownerID string, allowLogs, allowInvoke, allowKV, allowBlobs []string) string
 		Revoke(fn, token string)
 	}
 	// Arts backs image reload after daemon restarts (nil = skip).
