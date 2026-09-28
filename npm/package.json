@@ -1,6 +1,6 @@
 {
   "name": "@ur-wesley/serverless",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Serverless binary platform CLI — installs the prebuilt actions binary for your platform from GitHub Releases.",
   "license": "MIT",
   "bin": {

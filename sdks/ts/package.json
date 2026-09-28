@@ -1,6 +1,6 @@
 {
   "name": "@ur-wesley/serverless-sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TypeScript SDK for the serverless binary platform — handler ABI (GET /healthz, POST /invoke) plus sidecar Env client (KV, blobs, queue, logs, intercom).",
   "license": "MIT",
   "type": "module",
