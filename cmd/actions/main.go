@@ -33,7 +33,8 @@ Commands:
   config  [get|set url VALUE]                  show or change saved control plane URL
   init    --runtime ts|go --name NAME [--dir DIR]   scaffold actions.toml + src
   dev     [--dir DIR] [--url URL] [--offline] [-- cmd...]  run handler locally
-  deploy  [--dir DIR]                          zip src, upload, activate
+  deploy  [--dir DIR] [--no-wait]              zip src, upload, wait until active
+  jobs    NAME                                 list deploy jobs for a function
   invoke  [--method M] [--data BODY] [-d BODY] [--api-key KEY] NAME[/path]  call a function
   logs    [-f] NAME                            show/follow function logs
   ls                                           list your functions
@@ -90,6 +91,8 @@ func run(args []string) error {
 		return cmdDev(cmdArgs, url)
 	case "deploy":
 		return cmdDeploy(cmdArgs, url, token)
+	case "jobs":
+		return cmdJobs(cmdArgs, url, token)
 	case "invoke":
 		return cmdInvoke(cmdArgs, url, token)
 	case "logs":
@@ -228,6 +231,7 @@ func cmdDeploy(args []string, baseURL, token string) error {
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	dir := fs.String("dir", ".", "function dir")
 	url := fs.String("url", baseURL, "control plane base")
+	noWait := fs.Bool("no-wait", false, "enqueue and exit without waiting")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -243,11 +247,63 @@ func cmdDeploy(args []string, baseURL, token string) error {
 	if err != nil {
 		return err
 	}
-	res, err := cli.DeployWithAuth(*url, token, cfg.Name, string(tomlRaw), zipBytes)
+	job, err := cli.EnqueueDeploy(*url, token, cfg.Name, string(tomlRaw), zipBytes)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%s %s %s image=%s sha256=%.12s\n", res.Name, res.Version, res.Status, res.Image, res.SHA256)
+	fmt.Printf("job %s queued (%s %s)\n", job.ID, job.FnName, job.Version)
+	if *noWait {
+		return nil
+	}
+	shown := 0
+	deadline := time.Now().Add(10 * time.Minute)
+	for {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for job %s (actions jobs %s)", job.ID, job.FnName)
+		}
+		time.Sleep(2 * time.Second)
+		j, err := cli.GetDeployJob(*url, token, job.ID)
+		if err != nil {
+			return err
+		}
+		if logs, err := cli.GetDeployLogs(*url, token, job.ID); err == nil && len(logs) > shown {
+			fmt.Print(logs[shown:])
+			shown = len(logs)
+		}
+		switch j.Status {
+		case "active":
+			fmt.Printf("%s %s %s image=%s sha256=%.12s\n", j.FnName, j.Version, j.Status, j.Image, j.SHA256)
+			return nil
+		case "failed":
+			return fmt.Errorf("deploy %s failed: %s", j.ID, j.Error)
+		}
+	}
+}
+
+func cmdJobs(args []string, baseURL, token string) error {
+	fs := flag.NewFlagSet("jobs", flag.ContinueOnError)
+	url := fs.String("url", baseURL, "control plane base")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() == 0 {
+		return fmt.Errorf("usage: actions jobs NAME")
+	}
+	jobs, err := cli.ListDeployJobs(*url, token, fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if len(jobs) == 0 {
+		fmt.Println("(no jobs)")
+		return nil
+	}
+	for _, j := range jobs {
+		errSuffix := ""
+		if j.Error != "" {
+			errSuffix = " error=" + j.Error
+		}
+		fmt.Printf("%s  %s  %-8s  %s%s\n", j.ID[:min(8, len(j.ID))], j.Version, j.Status, j.CreatedAt, errSuffix)
+	}
 	return nil
 }
 
@@ -277,6 +333,9 @@ func cmdInvoke(args []string, baseURL, token string) error {
 		return err
 	}
 	fmt.Printf("status: %d\n%s\n", res.Status, res.Body)
+	if res.Status >= 400 {
+		return fmt.Errorf("invoke: status %d", res.Status)
+	}
 	return nil
 }
 
@@ -303,6 +362,10 @@ func cmdLogs(args []string, baseURL, token string) error {
 				continue
 			}
 			seen[id] = true
+			// Bound memory on long follows: keep only recent keys.
+			if len(seen) > 5000 {
+				seen = map[string]bool{id: true}
+			}
 			fmt.Printf("%s [%s/%s] %s\n", l.Time.Format(time.RFC3339), l.Version, l.RequestID, l.Line)
 		}
 		return nil

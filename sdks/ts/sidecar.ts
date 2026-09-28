@@ -9,6 +9,17 @@ export interface Env {
   blobGetBytes(fn: string, key: string): Promise<Uint8Array>;
   queuePublish(topic: string, message: Uint8Array | string): Promise<void>;
   log(fn: string, version: string, requestId: string, line: string): Promise<void>;
+  logsTail(target: string, limit?: number): Promise<LogLine[]>;
+  functionsList(): Promise<string[]>;
+  invokeOther(target: string, method: string, path: string, body?: Uint8Array | string, headers?: Record<string, string>, query?: Record<string, string>): Promise<{ status: number; headers: Record<string, string>; body: Uint8Array }>;
+}
+
+export interface LogLine {
+  Function: string;
+  Version: string;
+  RequestID: string;
+  Line: string;
+  Time: string;
 }
 
 const enc = new TextEncoder();
@@ -76,6 +87,21 @@ class HttpEnv implements Env {
   async log(fn: string, version: string, requestId: string, line: string) {
     await this.post("/sidecar/log/append", { function_name: fn, version, request_id: requestId, line });
   }
+  async logsTail(target: string, limit = 100): Promise<LogLine[]> {
+    const out = await this.post("/sidecar/logs/tail", { target_function: target, limit });
+    return (out.lines ?? []) as LogLine[];
+  }
+  async functionsList(): Promise<string[]> {
+    const out = await this.post("/sidecar/functions/list", {});
+    return (out.functions ?? []) as string[];
+  }
+  async invokeOther(target: string, method: string, path: string, body: Uint8Array | string = new Uint8Array(0), headers: Record<string, string> = {}, query: Record<string, string> = {}) {
+    const out = await this.post("/sidecar/invoke", {
+      target_function: target, method, path, headers, query,
+      body: b64encode(body),
+    });
+    return { status: out.status as number, headers: (out.headers ?? {}) as Record<string, string>, body: b64decode(out.body ?? "") };
+  }
 }
 
 /** In-memory mock for `actions dev --offline`. */
@@ -110,6 +136,15 @@ export function mockEnv(): Env & { published: { topic: string; message: Uint8Arr
     },
     async log(_fn: string, _v: string, _r: string, line: string) {
       logs.push(line);
+    },
+    async logsTail(_target: string, _limit = 100): Promise<LogLine[]> {
+      return [];
+    },
+    async functionsList(): Promise<string[]> {
+      return [];
+    },
+    async invokeOther(_t: string, _m: string, _p: string) {
+      throw new Error("invokeOther not supported offline");
     },
   };
 }

@@ -2,14 +2,19 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"actions/internal/artifacts"
@@ -27,7 +32,9 @@ import (
 
 func withRecovery(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		slog.Info("incoming request", "method", r.Method, "path", r.URL.Path, "host", r.Host, "remote", r.RemoteAddr)
+		if r.URL.Path != "/healthz" {
+			slog.Info("incoming request", "method", r.Method, "path", r.URL.Path, "host", r.Host, "remote", r.RemoteAddr)
+		}
 		defer func() {
 			if v := recover(); v != nil {
 				slog.Error("panic recovered", "err", v, "path", r.URL.Path)
@@ -43,6 +50,66 @@ func getenv(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// sidecarInvoker adapts runner.Backend to the sidecar intercom Invoke API.
+type sidecarInvoker struct {
+	backend    runner.Backend
+	store      *store.Store
+	sidecarURL string
+}
+
+func (s *sidecarInvoker) Invoke(ctx context.Context, target, method, path string, headers, query map[string]string, body []byte) (int, map[string]string, []byte, error) {
+	info, ok := functions.ResolveFull(s.store, target, s.sidecarURL)
+	if !ok {
+		return 0, nil, nil, &sidecarInvokeError{msg: "unknown function"}
+	}
+	if headers == nil {
+		headers = map[string]string{}
+	}
+	if query == nil {
+		query = map[string]string{}
+	}
+	payload, err := json.Marshal(map[string]any{
+		"event": map[string]any{
+			"method": method, "path": path, "headers": headers,
+			"query": query, "body": base64.StdEncoding.EncodeToString(body),
+		},
+		"ctx": map[string]any{
+			"function_name": info.Ref.Name, "version": info.Ref.Version,
+			"request_id": newRequestID(), "deadline_ms": time.Now().Add(runner.ClampTimeout(info.Ref.Timeout)).UnixMilli(),
+			"sidecar_url": info.Ref.SidecarURL,
+		},
+	})
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	resp, err := s.backend.Invoke(ctx, info.Ref, payload)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	raw, err := base64.StdEncoding.DecodeString(resp.Body)
+	if err != nil {
+		return 0, nil, nil, &sidecarInvokeError{msg: "bad handler body"}
+	}
+	status := resp.Status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	if resp.Headers == nil {
+		resp.Headers = map[string]string{}
+	}
+	return status, resp.Headers, raw, nil
+}
+
+type sidecarInvokeError struct{ msg string }
+
+func (e *sidecarInvokeError) Error() string { return e.msg }
+
+func newRequestID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 func main() {
@@ -91,6 +158,25 @@ func main() {
 	sidecarURL := functions.SidecarURLFromEnv(port)
 	// Blob transfer URLs must be dialable from handler containers.
 	sc := &sidecar.Server{KV: kv, Blobs: sidecar.NewBlobFromEnv(arts, sidecarURL), Bus: qbus, Logs: logs, Tokens: tokens}
+	sc.OwnerOf = func(name string) (string, bool) {
+		fn, err := st.GetFunction(name)
+		if err != nil || fn.ActiveVersion == "" {
+			return "", false
+		}
+		return fn.OwnerID, true
+	}
+	sc.ListOwn = func(ownerID string) []string {
+		fns, err := st.ListFunctionsByOwner(ownerID)
+		if err != nil {
+			return []string{}
+		}
+		names := make([]string, 0, len(fns))
+		for _, f := range fns {
+			names = append(names, f.Name)
+		}
+		return names
+	}
+	sc.Invoker = &sidecarInvoker{backend: backend, store: st, sidecarURL: sidecarURL}
 
 	helloImage := getenv("HELLO_IMAGE", "hello-ts:latest")
 
@@ -98,10 +184,21 @@ func main() {
 	sched.Start()
 	defer sched.Stop()
 
+	deployWorker := &deploy.Worker{Svc: svc, OnActivated: func(string) { sched.Sync() }}
+	deployWorker.Start()
+	defer deployWorker.Stop()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		i, c, warm := backend.Metrics()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"invokes": i, "cold_starts": c, "warm": warm,
+		})
 	})
 	controlauth.RegisterAuthRoutes(mux, st)
 	controlauth.RegisterKeyRoutes(mux, st)
@@ -130,7 +227,7 @@ func main() {
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	sc.RegisterRoutes(mux)
-	sidecar.RegisterTransferRoutes(mux, arts, tokens)
+	sidecar.RegisterTransferRoutesWithOwner(mux, arts, tokens, sc.OwnerOf)
 	mux.HandleFunc("POST /deploy", controlauth.RequireOperator(st, func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Name       string `json:"name"`
@@ -160,15 +257,105 @@ func main() {
 			http.Error(w, "src_zip_b64 must be non-empty base64", http.StatusBadRequest)
 			return
 		}
-		res, err := svc.Deploy(r.Context(), deploy.Request{Name: in.Name, ConfigTOML: in.ConfigTOML, SrcZip: zipBytes, OwnerID: ownerID})
+		job, err := svc.Enqueue(r.Context(), deploy.Request{Name: in.Name, ConfigTOML: in.ConfigTOML, SrcZip: zipBytes, OwnerID: ownerID})
 		if err != nil {
-			slog.Warn("deploy failed", "fn", in.Name, "err", err)
+			slog.Warn("deploy enqueue failed", "fn", in.Name, "err", err)
 			http.Error(w, "deploy: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		sched.Sync() // pick up new cron/queue triggers immediately
+		if r.URL.Query().Get("wait") != "1" && r.URL.Query().Get("sync") != "1" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(job)
+			return
+		}
+		// Synchronous compat: wait for the worker to finish the job.
+		deadline := time.Now().Add(110 * time.Second)
+		for {
+			j, err := st.GetJob(job.ID)
+			if err != nil {
+				http.Error(w, "job lost", http.StatusInternalServerError)
+				return
+			}
+			switch j.Status {
+			case store.JobActive:
+				sched.Sync()
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(deploy.Result{
+					Name: j.FnName, Version: j.Version, Status: j.Status,
+					Image: j.Image, SHA256: j.SHA256,
+				})
+				return
+			case store.JobFailed:
+				http.Error(w, "deploy "+j.ID+" failed: "+j.Error, http.StatusBadGateway)
+				return
+			}
+			if time.Now().After(deadline) {
+				http.Error(w, "deploy "+j.ID+" still "+j.Status+" (poll GET /deploys/"+j.ID+")", http.StatusAccepted)
+				return
+			}
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(time.Second):
+			}
+		}
+	}))
+	mux.HandleFunc("GET /deploys", controlauth.RequireOperator(st, func(w http.ResponseWriter, r *http.Request) {
+		fn := r.URL.Query().Get("fn")
+		if fn == "" {
+			http.Error(w, "?fn= required", http.StatusBadRequest)
+			return
+		}
+		if me, ok := controlauth.CurrentUser(st, r); ok {
+			if existing, err := st.GetFunction(fn); err == nil && existing.OwnerID != "" && existing.OwnerID != me.ID {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+		}
+		jobs, err := st.ListJobs(fn, 50)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if jobs == nil {
+			jobs = []store.Job{}
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(res)
+		_ = json.NewEncoder(w).Encode(jobs)
+	}))
+	mux.HandleFunc("GET /deploys/", controlauth.RequireOperator(st, func(w http.ResponseWriter, r *http.Request) {
+		rest := strings.TrimPrefix(r.URL.Path, "/deploys/")
+		id, tail, _ := strings.Cut(rest, "/")
+		j, err := st.GetJob(id)
+		if err != nil {
+			http.Error(w, "unknown job", http.StatusNotFound)
+			return
+		}
+		if me, ok := controlauth.CurrentUser(st, r); ok && j.OwnerID != "" && j.OwnerID != me.ID {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if tail == "logs" {
+			if j.LogKey == "" {
+				http.Error(w, "no logs yet", http.StatusNotFound)
+				return
+			}
+			raw, err := arts.Get(r.Context(), j.LogKey)
+			if err != nil {
+				http.Error(w, "no logs yet", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = w.Write(raw)
+			return
+		}
+		if tail != "" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(j)
 	}))
 	mux.HandleFunc("GET /functions", controlauth.RequireOperator(st, func(w http.ResponseWriter, r *http.Request) {
 		var fns []store.Function
@@ -222,6 +409,80 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(logs.Tail(fn, 100))
 	}))
+	mux.HandleFunc("GET /versions", controlauth.RequireOperator(st, func(w http.ResponseWriter, r *http.Request) {
+		fn := r.URL.Query().Get("fn")
+		if fn == "" {
+			http.Error(w, "?fn= required", http.StatusBadRequest)
+			return
+		}
+		if me, ok := controlauth.CurrentUser(st, r); ok {
+			if existing, err := st.GetFunction(fn); err == nil && existing.OwnerID != "" && existing.OwnerID != me.ID {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+		}
+		vers, err := st.ListVersions(fn)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if vers == nil {
+			vers = []store.Version{}
+		}
+		sort.SliceStable(vers, func(i, j int) bool {
+			vi, ei := deploy.ParseVersion(vers[i].Ver)
+			vj, ej := deploy.ParseVersion(vers[j].Ver)
+			if ei != nil || ej != nil {
+				return vers[i].Ver < vers[j].Ver
+			}
+			return deploy.Compare(vi, vj) < 0
+		})
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(vers)
+	}))
+	mux.HandleFunc("POST /rollback", controlauth.RequireOperator(st, func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Name string `json:"name"`
+			Ver  string `json:"ver"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&in); err != nil {
+			http.Error(w, "bad JSON", http.StatusBadRequest)
+			return
+		}
+		if me, ok := controlauth.CurrentUser(st, r); ok {
+			if existing, err := st.GetFunction(in.Name); err == nil && existing.OwnerID != "" && existing.OwnerID != me.ID {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+		}
+		if err := st.SetActiveVersion(in.Name, in.Ver); err != nil {
+			http.Error(w, "rollback: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		sched.Sync()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"name": in.Name, "active_version": in.Ver})
+	}))
+	mux.HandleFunc("DELETE /functions", controlauth.RequireOperator(st, func(w http.ResponseWriter, r *http.Request) {
+		fn := r.URL.Query().Get("fn")
+		if fn == "" {
+			http.Error(w, "?fn= required", http.StatusBadRequest)
+			return
+		}
+		if me, ok := controlauth.CurrentUser(st, r); ok {
+			if existing, err := st.GetFunction(fn); err == nil && existing.OwnerID != "" && existing.OwnerID != me.ID {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+		}
+		if err := st.DeleteFunction(fn); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		sched.Sync()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"deleted": fn})
+	}))
 
 	srv := &http.Server{
 		Addr:              ":" + port,
@@ -233,8 +494,17 @@ func main() {
 	}
 	slog.Info("controlplane listening", "port", port, "sqlite", sqlitePath, "sidecar", sidecarURL,
 		"sandbox", os.Getenv("RUNNER_SANDBOX_NET") != "")
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		slog.Error("server exited", "err", err)
-		os.Exit(1)
-	}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("server exited", "err", err)
+			os.Exit(1)
+		}
+	}()
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	<-stop
+	slog.Info("shutting down")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(ctx)
 }

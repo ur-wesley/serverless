@@ -71,12 +71,27 @@ func TestKVTTLExpiry(t *testing.T) {
 	}
 }
 
+func TestUnwrapNatsKVValue(t *testing.T) {
+	plain := []byte("hello")
+	if v, ok := unwrapNatsKVValue(plain); !ok || string(v) != "hello" {
+		t.Fatalf("plain passthrough failed: %q %v", v, ok)
+	}
+	wrapped, _ := json.Marshal(map[string]any{"exp": time.Now().Add(time.Minute).Unix(), "v": []byte("ttl-val")})
+	if v, ok := unwrapNatsKVValue(wrapped); !ok || string(v) != "ttl-val" {
+		t.Fatalf("ttl unwrap failed: %q %v", v, ok)
+	}
+	expired, _ := json.Marshal(map[string]any{"exp": time.Now().Add(-time.Minute).Unix(), "v": []byte("old")})
+	if _, ok := unwrapNatsKVValue(expired); ok {
+		t.Fatal("expired should be not-found")
+	}
+}
+
 func TestQueuePublishReachesBus(t *testing.T) {
 	s := testServer()
 	mux := http.NewServeMux()
 	s.RegisterRoutes(mux)
 	ch := make(chan string, 1)
-	unsub, err := s.Bus.Subscribe("orders.created", func(_ context.Context, msg []byte) { ch <- string(msg) })
+	unsub, err := s.Bus.Subscribe("orders.created", func(_ context.Context, msg []byte) error { ch <- string(msg); return nil })
 	if err != nil {
 		t.Fatal(err)
 	}

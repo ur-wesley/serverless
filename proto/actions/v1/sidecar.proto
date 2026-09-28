@@ -24,6 +24,15 @@ service QueueService {
 
 service LogService {
   rpc LogAppend(LogAppendRequest) returns (LogAppendResponse);
+  // Intercom: tail another function's logs when allow_logs + same owner.
+  rpc LogTail(LogTailRequest) returns (LogTailResponse);
+}
+
+service IntercomService {
+  // List own functions (names only) for dashboard discovery.
+  rpc FunctionsList(FunctionsListRequest) returns (FunctionsListResponse);
+  // Invoke another function when allow_invoke + same owner.
+  rpc InvokeOther(InvokeOtherRequest) returns (InvokeOtherResponse);
 }
 
 message KvGetRequest {
@@ -77,3 +86,40 @@ message LogAppendRequest {
   string line = 4;
 }
 message LogAppendResponse {}
+
+message LogTailRequest {
+  // target_function preferred; function_name accepted as alias (JSON API).
+  string target_function = 1;
+  string function_name = 2;
+  int32 limit = 3;
+}
+message LogLine {
+  string function = 1;
+  string version = 2;
+  string request_id = 3;
+  string line = 4;
+  string time = 5;
+}
+message LogTailResponse {
+  repeated LogLine lines = 1;
+}
+
+message FunctionsListRequest {}
+message FunctionsListResponse {
+  repeated string functions = 1;
+}
+
+message InvokeOtherRequest {
+  string target_function = 1;
+  string function_name = 2;
+  string method = 3;
+  string path = 4;
+  map<string, string> headers = 5;
+  map<string, string> query = 6;
+  bytes body = 7;
+}
+message InvokeOtherResponse {
+  int32 status = 1;
+  map<string, string> headers = 2;
+  bytes body = 3;
+}

@@ -16,7 +16,7 @@ import (
 
 var httpClient = &http.Client{Timeout: 5 * time.Minute}
 
-// ZipDir zips dir (skips .git, node_modules, data) for upload.
+// ZipDir zips dir (skips .git, node_modules, data, build outputs) for upload.
 func ZipDir(dir string) ([]byte, error) {
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
@@ -33,9 +33,12 @@ func ZipDir(dir string) ([]byte, error) {
 		}
 		base := filepath.Base(rel)
 		if d.IsDir() {
-			if base == ".git" || base == "node_modules" || base == "data" {
+			if base == ".git" || base == "node_modules" || base == "data" || base == ".beads" {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if base == "controlplane.exe" || base == "controlplane" || base == "actions.exe" || strings.HasSuffix(base, ".db") {
 			return nil
 		}
 		f, err := os.Open(path)
@@ -65,6 +68,130 @@ type DeployResult struct {
 	Status  string `json:"status"`
 	Image   string `json:"image"`
 	SHA256  string `json:"sha256"`
+}
+
+// DeployJob mirrors store.Job over the jobs API.
+type DeployJob struct {
+	ID        string `json:"id"`
+	FnName    string `json:"fn_name"`
+	Status    string `json:"status"`
+	Version   string `json:"version"`
+	Image     string `json:"image"`
+	SHA256    string `json:"sha256"`
+	Error     string `json:"error"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+func deployReq(baseURL, token string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequest("POST", strings.TrimSuffix(baseURL, "/")+"/deploy", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return req, nil
+}
+
+// EnqueueDeploy uploads src and returns the queued job (HTTP 202).
+func EnqueueDeploy(baseURL, token, name, configTOML string, srcZip []byte) (*DeployJob, error) {
+	body, _ := json.Marshal(map[string]string{
+		"name": name, "config_toml": configTOML,
+		"src_zip_b64": base64.StdEncoding.EncodeToString(srcZip),
+	})
+	req, err := deployReq(baseURL, token, body)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == 401 {
+		return nil, fmt.Errorf("deploy: unauthorized (run `actions login`)")
+	}
+	if resp.StatusCode != http.StatusAccepted {
+		return nil, fmt.Errorf("deploy: %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	var out DeployJob
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetDeployJob fetches one job by id.
+func GetDeployJob(baseURL, token, id string) (*DeployJob, error) {
+	req, err := http.NewRequest("GET", strings.TrimSuffix(baseURL, "/")+"/deploys/"+id, nil)
+	if err != nil {
+		return nil, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
+		return nil, fmt.Errorf("job %s: %d: %s", id, resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	var out DeployJob
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListDeployJobs lists a function's jobs, newest first.
+func ListDeployJobs(baseURL, token, fn string) ([]DeployJob, error) {
+	req, err := http.NewRequest("GET", strings.TrimSuffix(baseURL, "/")+"/deploys?fn="+fn, nil)
+	if err != nil {
+		return nil, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var out []DeployJob
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []DeployJob{}
+	}
+	return out, nil
+}
+
+// GetDeployLogs returns the build log text for a job (may be empty early on).
+func GetDeployLogs(baseURL, token, id string) (string, error) {
+	req, err := http.NewRequest("GET", strings.TrimSuffix(baseURL, "/")+"/deploys/"+id+"/logs", nil)
+	if err != nil {
+		return "", err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 404 {
+		return "", nil
+	}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return string(raw), nil
 }
 
 func Deploy(baseURL, name, configTOML string, srcZip []byte) (*DeployResult, error) {

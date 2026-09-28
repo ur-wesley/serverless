@@ -237,3 +237,62 @@ func (e Env) Logf(ctx context.Context, fn, ver, reqID, format string, args ...an
 		"line": fmt.Sprintf(format, args...),
 	}, nil)
 }
+
+type LogLine struct {
+	Function  string `json:"Function"`
+	Version   string `json:"Version"`
+	RequestID string `json:"RequestID"`
+	Line      string `json:"Line"`
+	Time      string `json:"Time"`
+}
+
+// LogsTail reads another function's logs via intercom (allow_logs + same owner).
+func (e Env) LogsTail(ctx context.Context, target string, limit int) ([]LogLine, error) {
+	var out struct {
+		Lines []LogLine `json:"lines"`
+	}
+	if err := e.post(ctx, "/sidecar/logs/tail", map[string]any{
+		"target_function": target, "limit": limit,
+	}, &out); err != nil {
+		return nil, err
+	}
+	return out.Lines, nil
+}
+
+// FunctionsList returns own function names for dashboard discovery.
+func (e Env) FunctionsList(ctx context.Context) ([]string, error) {
+	var out struct {
+		Functions []string `json:"functions"`
+	}
+	if err := e.post(ctx, "/sidecar/functions/list", map[string]any{}, &out); err != nil {
+		return nil, err
+	}
+	return out.Functions, nil
+}
+
+type InvokeResult struct {
+	Status  int               `json:"status"`
+	Headers map[string]string `json:"headers"`
+	Body    []byte            `json:"-"`
+}
+
+// InvokeOther calls another function via intercom (allow_invoke + same owner).
+func (e Env) InvokeOther(ctx context.Context, target, method, path string, headers, query map[string]string, body []byte) (InvokeResult, error) {
+	var out struct {
+		Status  int               `json:"status"`
+		Headers map[string]string `json:"headers"`
+		Body    string            `json:"body"`
+	}
+	if err := e.post(ctx, "/sidecar/invoke", map[string]any{
+		"target_function": target, "method": method, "path": path,
+		"headers": headers, "query": query,
+		"body": base64.StdEncoding.EncodeToString(body),
+	}, &out); err != nil {
+		return InvokeResult{}, err
+	}
+	raw, err := base64.StdEncoding.DecodeString(out.Body)
+	if err != nil {
+		return InvokeResult{}, err
+	}
+	return InvokeResult{Status: out.Status, Headers: out.Headers, Body: raw}, nil
+}

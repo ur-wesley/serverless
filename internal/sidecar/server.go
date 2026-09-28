@@ -143,7 +143,26 @@ func (n *NatsKV) Get(fn, key string) ([]byte, bool) {
 	if err != nil {
 		return nil, false
 	}
-	return e.Value(), true
+	return unwrapNatsKVValue(e.Value())
+}
+
+// unwrapNatsKVValue decodes values written by Put: plain bytes pass through,
+// TTL envelopes {"exp":unix,"v":base64} are unwrapped and expiry-checked.
+func unwrapNatsKVValue(raw []byte) ([]byte, bool) {
+	if len(raw) == 0 || raw[0] != '{' {
+		return raw, true
+	}
+	var env struct {
+		Exp int64  `json:"exp"`
+		V   []byte `json:"v"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil || env.Exp == 0 || env.V == nil {
+		return raw, true
+	}
+	if time.Now().Unix() > env.Exp {
+		return nil, false
+	}
+	return env.V, true
 }
 
 func (n *NatsKV) Put(fn, key string, value []byte, ttl time.Duration) {
@@ -251,6 +270,15 @@ type Server struct {
 	Logs  *LogRing
 	// Tokens enforces per-function bearer auth (nil = open, tests only).
 	Tokens *Registry
+	// OwnerOf resolves function -> ownerID. Wired by controlplane to avoid
+	// importing store here (cycle-safe). Nil = skip owner check (tests/dev).
+	OwnerOf func(name string) (string, bool)
+	// ListOwn lists functions visible to ownerID (names only for intercom).
+	ListOwn func(ownerID string) []string
+	// Invoker runs another function for POST /sidecar/invoke. Nil = 501.
+	Invoker interface {
+		Invoke(ctx context.Context, target string, method, path string, headers, query map[string]string, body []byte) (status int, respHeaders map[string]string, respBody []byte, err error)
+	}
 }
 
 // authorize checks X-Actions-Token against fn. Nil registry = open.
@@ -262,11 +290,77 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, fn string) bo
 		http.Error(w, "function required", http.StatusBadRequest)
 		return false
 	}
-	if !s.Tokens.Check(fn, r.Header.Get("X-Actions-Token")) {
+	tok := r.Header.Get("X-Actions-Token")
+	if s.Tokens.Check(fn, tok) {
+		return true
+	}
+	// Intercom: caller may act as target when its policy allows + same owner.
+	// KV/blob callers use capability-specific checks below; this fallback
+	// keeps backward compat for tests with plain Mint tokens (no policy).
+	if caller, ok := s.Tokens.CallerOf(tok); ok && caller != "" && caller != fn {
+		// Generic fallback denied here; capability routes call authorizeAs.
+		_ = caller
+	}
+	http.Error(w, "forbidden", http.StatusForbidden)
+	return false
+}
+
+// authorizeAs checks self OR intercom policy for a capability.
+// capability is one of "logs", "invoke", "kv", "blobs".
+func (s *Server) authorizeAs(w http.ResponseWriter, r *http.Request, capability, target string) (caller string, ok bool) {
+	if s.Tokens == nil {
+		return "", true
+	}
+	tok := r.Header.Get("X-Actions-Token")
+	if target == "" {
+		http.Error(w, "function required", http.StatusBadRequest)
+		return "", false
+	}
+	if s.Tokens.Check(target, tok) {
+		caller, _ = s.Tokens.CallerOf(tok)
+		return caller, true
+	}
+	caller, hasCaller := s.Tokens.CallerOf(tok)
+	if !hasCaller {
 		http.Error(w, "forbidden", http.StatusForbidden)
+		return "", false
+	}
+	pol, _ := s.Tokens.PolicyOf(tok)
+	var list []string
+	switch capability {
+	case "logs":
+		list = pol.AllowLogs
+	case "invoke":
+		list = pol.AllowInvoke
+	case "kv":
+		list = pol.AllowKV
+	case "blobs":
+		list = pol.AllowBlobs
+	default:
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return "", false
+	}
+	if !Allows(list, target) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return "", false
+	}
+	if !s.sameOwner(caller, pol.OwnerID, target) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return "", false
+	}
+	return caller, true
+}
+
+func (s *Server) sameOwner(caller, callerOwner, target string) bool {
+	if s.OwnerOf == nil {
+		return true
+	}
+	targetOwner, ok := s.OwnerOf(target)
+	if !ok {
 		return false
 	}
-	return true
+	// Legacy unowned functions (empty owner) can intercom with each other.
+	return callerOwner == targetOwner
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, maxBytes int64, v any) bool {
@@ -299,7 +393,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 		if !readJSON(w, r, 64*1024, &in) {
 			return
 		}
-		if !s.authorize(w, r, in.FunctionName) {
+		if _, ok := s.authorizeKV(w, r, in.FunctionName); !ok {
 			return
 		}
 		v, ok := s.KV.Get(in.FunctionName, in.Key)
@@ -315,7 +409,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 		if !readJSON(w, r, 1<<20, &in) {
 			return
 		}
-		if !s.authorize(w, r, in.FunctionName) {
+		if _, ok := s.authorizeKV(w, r, in.FunctionName); !ok {
 			return
 		}
 		v, err := b64decode(in.Value)
@@ -334,7 +428,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 		if !readJSON(w, r, 64*1024, &in) {
 			return
 		}
-		if !s.authorize(w, r, in.FunctionName) {
+		if _, ok := s.authorizeKV(w, r, in.FunctionName); !ok {
 			return
 		}
 		s.KV.Del(in.FunctionName, in.Key)
@@ -348,15 +442,25 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("POST /sidecar/queue/publish", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
-			Topic   string `json:"topic"`
-			Message string `json:"message"` // base64
+			Topic        string `json:"topic"`
+			Message      string `json:"message"` // base64
+			FunctionName string `json:"function_name"`
 		}
 		if !readJSON(w, r, 4<<20, &in) {
 			return
 		}
-		if s.Tokens != nil && !s.Tokens.ValidAny(r.Header.Get("X-Actions-Token")) {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
+		if s.Tokens != nil {
+			tok := r.Header.Get("X-Actions-Token")
+			if !s.Tokens.ValidAny(tok) {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			// When the caller identifies itself, the token must belong to
+			// that function (prevents one function impersonating another).
+			if in.FunctionName != "" && !s.Tokens.Check(in.FunctionName, tok) {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
 		}
 		if in.Topic == "" {
 			http.Error(w, "topic required", http.StatusBadRequest)
@@ -389,6 +493,135 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 		s.Logs.Append(in.FunctionName, in.Version, in.RequestID, in.Line)
 		writeJSON(w, map[string]any{})
 	})
+	// Intercom: tail another function's logs when allow_logs + same owner.
+	mux.HandleFunc("POST /sidecar/logs/tail", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			TargetFunction string `json:"target_function"`
+			FunctionName   string `json:"function_name"` // alias
+			Limit          int    `json:"limit"`
+		}
+		if !readJSON(w, r, 64*1024, &in) {
+			return
+		}
+		target := in.TargetFunction
+		if target == "" {
+			target = in.FunctionName
+		}
+		caller, ok := s.authorizeAs(w, r, "logs", target)
+		if !ok {
+			return
+		}
+		_ = caller
+		n := in.Limit
+		if n <= 0 || n > 500 {
+			n = 100
+		}
+		writeJSON(w, map[string]any{"lines": s.Logs.Tail(target, n)})
+	})
+	// Intercom: list own functions (names only) for dashboard discovery.
+	// Any valid function token may call; results are scoped to caller owner.
+	mux.HandleFunc("POST /sidecar/functions/list", func(w http.ResponseWriter, r *http.Request) {
+		if s.Tokens != nil && !s.Tokens.ValidAny(r.Header.Get("X-Actions-Token")) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		names := []string{}
+		if s.ListOwn != nil {
+			caller, _ := s.Tokens.CallerOf(r.Header.Get("X-Actions-Token"))
+			pol, _ := s.Tokens.PolicyOf(r.Header.Get("X-Actions-Token"))
+			_ = caller
+			if got := s.ListOwn(pol.OwnerID); got != nil {
+				names = got
+			}
+		}
+		writeJSON(w, map[string]any{"functions": names})
+	})
+	// Intercom: invoke another function when allow_invoke + same owner.
+	mux.HandleFunc("POST /sidecar/invoke", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			TargetFunction string            `json:"target_function"`
+			FunctionName   string            `json:"function_name"` // alias
+			Method         string            `json:"method"`
+			Path           string            `json:"path"`
+			Headers        map[string]string `json:"headers"`
+			Query          map[string]string `json:"query"`
+			Body           string            `json:"body"` // base64
+		}
+		if !readJSON(w, r, 4<<20, &in) {
+			return
+		}
+		target := in.TargetFunction
+		if target == "" {
+			target = in.FunctionName
+		}
+		if _, ok := s.authorizeAs(w, r, "invoke", target); !ok {
+			return
+		}
+		if s.Invoker == nil {
+			http.Error(w, "invoke unavailable", http.StatusNotImplemented)
+			return
+		}
+		method := in.Method
+		if method == "" {
+			method = "GET"
+		}
+		p := in.Path
+		if p == "" {
+			p = "/"
+		}
+		raw, err := b64decode(in.Body)
+		if err != nil {
+			http.Error(w, "body must be base64", http.StatusBadRequest)
+			return
+		}
+		status, respHeaders, respBody, err := s.Invoker.Invoke(r.Context(), target, method, p, in.Headers, in.Query, raw)
+		if err != nil {
+			http.Error(w, "invoke: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		if respHeaders == nil {
+			respHeaders = map[string]string{}
+		}
+		writeJSON(w, map[string]any{
+			"status":  status,
+			"headers": respHeaders,
+			"body":    base64.StdEncoding.EncodeToString(respBody),
+		})
+	})
+}
+
+// authorizeKV allows self or allow_kv intercom.
+func (s *Server) authorizeKV(w http.ResponseWriter, r *http.Request, target string) (string, bool) {
+	if s.Tokens == nil {
+		return "", true
+	}
+	tok := r.Header.Get("X-Actions-Token")
+	if target == "" {
+		http.Error(w, "function required", http.StatusBadRequest)
+		return "", false
+	}
+	if s.Tokens.Check(target, tok) {
+		caller, _ := s.Tokens.CallerOf(tok)
+		return caller, true
+	}
+	return s.authorizeAs(w, r, "kv", target)
+}
+
+// authorizeBlob allows self or allow_blobs intercom.
+func (s *Server) authorizeBlob(w http.ResponseWriter, r *http.Request, target string) (string, bool) {
+	if s.Tokens == nil {
+		return "", true
+	}
+	tok := r.Header.Get("X-Actions-Token")
+	if target == "" {
+		http.Error(w, "function required", http.StatusBadRequest)
+		return "", false
+	}
+	if s.Tokens.Check(target, tok) {
+		caller, _ := s.Tokens.CallerOf(tok)
+		return caller, true
+	}
+	return s.authorizeAs(w, r, "blobs", target)
 }
 
 func (s *Server) blobURL(w http.ResponseWriter, r *http.Request, put bool) {	var in struct {
@@ -403,7 +636,7 @@ func (s *Server) blobURL(w http.ResponseWriter, r *http.Request, put bool) {	var
 		http.Error(w, "key required", http.StatusBadRequest)
 		return
 	}
-	if !s.authorize(w, r, in.FunctionName) {
+	if _, ok := s.authorizeBlob(w, r, in.FunctionName); !ok {
 		return
 	}
 	exp := time.Duration(in.ExpiresSeconds) * time.Second
@@ -430,16 +663,44 @@ func (s *Server) blobURL(w http.ResponseWriter, r *http.Request, put bool) {	var
 // presigned-style URLs: PUT /blob/ul?key=blobs/<fn>/<key>,
 // GET /blob/dl?key=blobs/<fn>/<key>. Mounted on the control plane.
 // tokens may be nil (open); otherwise X-Actions-Token must match the fn
-// embedded in the key.
+// embedded in the key, or belong to an intercom-allowed caller (allow_blobs
+// + same owner when ownerOf is set).
 func RegisterTransferRoutes(mux *http.ServeMux, arts artifacts.Store, tokens *Registry) {
+	RegisterTransferRoutesWithOwner(mux, arts, tokens, nil)
+}
+
+// RegisterTransferRoutesWithOwner adds same-owner intercom for blobs.
+func RegisterTransferRoutesWithOwner(mux *http.ServeMux, arts artifacts.Store, tokens *Registry, ownerOf func(name string) (string, bool)) {
 	check := func(w http.ResponseWriter, r *http.Request, key string) bool {
 		fn, _, _ := strings.Cut(strings.TrimPrefix(key, "blobs/"), "/")
 		if tokens == nil {
 			return true
 		}
-		if fn == "" || !tokens.Check(fn, r.Header.Get("X-Actions-Token")) {
+		tok := r.Header.Get("X-Actions-Token")
+		if fn == "" {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return false
+		}
+		if tokens.Check(fn, tok) {
+			return true
+		}
+		caller, ok := tokens.CallerOf(tok)
+		if !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return false
+		}
+		pol, _ := tokens.PolicyOf(tok)
+		if !Allows(pol.AllowBlobs, fn) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return false
+		}
+		if ownerOf != nil {
+			targetOwner, ok := ownerOf(fn)
+			if !ok || targetOwner != pol.OwnerID {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return false
+			}
+			_ = caller
 		}
 		return true
 	}
@@ -478,5 +739,20 @@ func RegisterTransferRoutes(mux *http.ServeMux, arts artifacts.Store, tokens *Re
 			return
 		}
 		_, _ = w.Write(data)
+	})
+	mux.HandleFunc("DELETE /blob/del", func(w http.ResponseWriter, r *http.Request) {
+		key := r.URL.Query().Get("key")
+		if !strings.HasPrefix(key, "blobs/") || key == "" {
+			http.Error(w, "bad key", http.StatusBadRequest)
+			return
+		}
+		if !check(w, r, key) {
+			return
+		}
+		if err := arts.Delete(r.Context(), key); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
 	})
 }

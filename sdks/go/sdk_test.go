@@ -100,3 +100,8 @@ func (m *mapStore) Get(_ context.Context, key string) ([]byte, error) {
 	}
 	return v, nil
 }
+
+func (m *mapStore) Delete(_ context.Context, key string) error {
+	delete(m.data, key)
+	return nil
+}
