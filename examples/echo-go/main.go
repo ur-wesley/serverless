@@ -118,6 +118,11 @@ func main() {
 			if last, ok := sidecarGet(in.Ctx.SidecarURL, fn, "last"); ok {
 				text += " last=" + last
 			}
+			sidecarPost(in.Ctx.SidecarURL, "/sidecar/log/append", map[string]string{
+				"function_name": fn, "version": in.Ctx.Version,
+				"request_id": in.Ctx.RequestID,
+				"line":       fmt.Sprintf("http %s %s body=%d bytes", in.Event.Method, in.Event.Path, len(body)),
+			})
 		}
 		writeResp(w, 200, text)
 	})

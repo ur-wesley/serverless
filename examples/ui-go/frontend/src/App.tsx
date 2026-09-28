@@ -2,6 +2,7 @@ import Counter from "./components/Counter";
 import EchoCaller from "./components/EchoCaller";
 import WhoamiPanel from "./components/WhoamiPanel";
 import HeartbeatPanel from "./components/HeartbeatPanel";
+import QueuePanel from "./components/QueuePanel";
 import LogsPanel from "./components/LogsPanel";
 import "./app.css";
 
@@ -18,6 +19,7 @@ export default function App() {
       <EchoCaller />
       <WhoamiPanel />
       <HeartbeatPanel />
+      <QueuePanel />
       <LogsPanel />
     </main>
   );
