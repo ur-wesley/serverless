@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { getJSON, FnInfo } from "../api";
+import { btn, btnBlue, card, h2, input, pre, row } from "../ui";
 
 export default function QueuePanel() {
   const [topic, setTopic] = createSignal("orders.created");
@@ -12,7 +13,7 @@ export default function QueuePanel() {
         method: "POST",
         body: msg(),
       });
-      setOut(`POST /pub/${topic()} -> ${res.status} ${res.statusText}\ncheck the logs panel for delivery.`);
+      setOut(`POST /pub/${topic()} -> ${res.status} ${res.statusText}\ncheck the logs tab for delivery.`);
     } catch (e) {
       setOut(`error: ${e}`);
     }
@@ -26,15 +27,15 @@ export default function QueuePanel() {
     }
   }
   return (
-    <div class="card">
-      <h2>publish queue event</h2>
-      <p>
-        <input value={topic()} onInput={(e) => setTopic(e.target.value)} style={{ width: "35%" }} />
-        <input value={msg()} onInput={(e) => setMsg(e.target.value)} />
-        <button onClick={publish}>publish</button>
-        <button onClick={subscribers}>list functions</button>
+    <div class={card}>
+      <h2 class={h2}>publish queue event</h2>
+      <p class={row}>
+        <input class={`${input} w-1/3`} value={topic()} onInput={(e) => setTopic(e.target.value)} />
+        <input class={`${input} w-1/3`} value={msg()} onInput={(e) => setMsg(e.target.value)} />
+        <button class={btn} onClick={publish}>publish</button>
+        <button class={btnBlue} onClick={subscribers}>list functions</button>
       </p>
-      <pre>{out()}</pre>
+      <pre class={`${pre} mt-2`}>{out()}</pre>
     </div>
   );
 }

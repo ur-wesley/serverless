@@ -1,5 +1,6 @@
 import { createSignal, onCleanup, onMount } from "solid-js";
 import { getJSON } from "../api";
+import { btn, card, h2, muted, pre } from "../ui";
 
 interface Beat {
   fn: string;
@@ -26,18 +27,18 @@ export default function HeartbeatPanel() {
   });
   onCleanup(() => window.clearInterval(timer));
   return (
-    <div class="card">
-      <h2>cron heartbeat (KV)</h2>
+    <div class={card}>
+      <h2 class={h2}>cron heartbeat (KV)</h2>
       <p>
-        <button onClick={load}>refresh</button>
-        <span class="muted"> auto-refreshes every 30s</span>
+        <button class={btn} onClick={load}>refresh</button>{" "}
+        <span class={muted}>auto-refreshes every 30s</span>
       </p>
       {error() ? (
-        <pre>{error()}</pre>
+        <pre class={`${pre} mt-2`}>{error()}</pre>
       ) : beat() ? (
-        <pre>{`beats: ${beat()!.beats}\nlast:  ${beat()!.last_beat || "-"}\n${beat()!.hint}`}</pre>
+        <pre class={`${pre} mt-2`}>{`beats: ${beat()!.beats}\nlast:  ${beat()!.last_beat || "-"}\n${beat()!.hint}`}</pre>
       ) : (
-        <pre>loading…</pre>
+        <pre class={`${pre} mt-2`}>loading…</pre>
       )}
     </div>
   );

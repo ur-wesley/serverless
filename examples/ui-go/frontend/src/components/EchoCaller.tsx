@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { postText } from "../api";
+import { btn, card, h2, input, pre, row } from "../ui";
 
 export default function EchoCaller() {
   const [msg, setMsg] = createSignal("hello from the browser");
@@ -13,13 +14,13 @@ export default function EchoCaller() {
     }
   }
   return (
-    <div class="card">
-      <h2>call the echo function</h2>
-      <p>
-        <input value={msg()} onInput={(e) => setMsg(e.target.value)} />
-        <button onClick={call}>call /f/echo</button>
+    <div class={card}>
+      <h2 class={h2}>call the echo function</h2>
+      <p class={row}>
+        <input class={`${input} w-3/5`} value={msg()} onInput={(e) => setMsg(e.target.value)} />
+        <button class={btn} onClick={call}>call /f/echo</button>
       </p>
-      <pre>{out()}</pre>
+      <pre class={`${pre} mt-2`}>{out()}</pre>
     </div>
   );
 }

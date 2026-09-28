@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { getText } from "../api";
+import { btn, card, h2, pre } from "../ui";
 
 export default function WhoamiPanel() {
   const [out, setOut] = createSignal("press the button…");
@@ -12,12 +13,12 @@ export default function WhoamiPanel() {
     }
   }
   return (
-    <div class="card">
-      <h2>whoami function</h2>
+    <div class={card}>
+      <h2 class={h2}>whoami function</h2>
       <p>
-        <button onClick={load}>ask whoami</button>
+        <button class={btn} onClick={load}>ask whoami</button>
       </p>
-      <pre>{out()}</pre>
+      <pre class={`${pre} mt-2`}>{out()}</pre>
     </div>
   );
 }
