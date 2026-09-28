@@ -1,0 +1,15 @@
+FROM golang:1.27-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum* ./
+RUN go mod download || true
+COPY . .
+RUN CGO_ENABLED=0 go build -o /out/controlplane ./cmd/controlplane
+
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates docker-cli
+WORKDIR /app
+# Builder Dockerfiles (deploy shells `docker build -f builders/builder-<runtime>`).
+COPY builders ./builders
+COPY --from=build /out/controlplane /usr/local/bin/controlplane
+EXPOSE 8080
+CMD ["controlplane"]

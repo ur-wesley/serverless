@@ -1,0 +1,96 @@
+services:
+  controlplane:
+    build:
+      context: .
+      dockerfile: Dockerfile.controlplane
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      NATS_URL: "nats://nats:4222"
+      RUSTFS_ENDPOINT: "http://rustfs:9000"
+      RUSTFS_ACCESS_KEY: "minioadmin"
+      RUSTFS_SECRET_KEY: "minioadmin"
+      SQLITE_PATH: "/data/actions.db"
+      ARTIFACTS_DIR: "/data/bundles"
+      RUNNER_NETWORK: "actions-net"
+      # Egress-isolated functions (!allow_egress) run on this --internal net.
+      RUNNER_SANDBOX_NET: "actions-sandbox"
+      # Dialable host address for published (egress-allowed) handler ports.
+      RUNNER_HOST_GW: "host.docker.internal"
+      HELLO_IMAGE: "hello-ts:latest"
+      ACTIONS_SIDECAR_URL: "http://controlplane:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - controlplane-data:/data
+    depends_on:
+      - nats
+      - rustfs
+    networks:
+      - actions-net
+      - actions-sandbox
+
+  nats:
+    image: nats:2.11
+    command: ["-js", "-sd", "/data"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats-data:/data
+    networks:
+      - actions-net
+
+  rustfs:
+    image: rustfs/rustfs:latest
+    ports:
+      - "9000:9000"
+    environment:
+      RUSTFS_ACCESS_KEY: "minioadmin"
+      RUSTFS_SECRET_KEY: "minioadmin"
+    volumes:
+      - rustfs-data:/data
+    networks:
+      - actions-net
+
+  caddy:
+    image: caddy:2.9-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - controlplane
+    networks:
+      - actions-net
+
+  # Optional SQLite backup (Litestream -> RustFS). Enable with:
+  #   docker compose --profile backup up
+  litestream:
+    image: litestream/litestream:v0.3.13
+    profiles:
+      - backup
+    volumes:
+      - controlplane-data:/data
+      - ./litestream.yml:/etc/litestream.yml:ro
+    command: ["replicate", "-config", "/etc/litestream.yml"]
+    depends_on:
+      - rustfs
+    networks:
+      - actions-net
+
+networks:
+  actions-net:
+    driver: bridge
+  # Egress-isolated functions live here: no external route, only
+  # sandbox members (control plane/sidecar) reachable.
+  actions-sandbox:
+    driver: bridge
+    internal: true
+
+volumes:
+  controlplane-data:
+  nats-data:
+  rustfs-data:

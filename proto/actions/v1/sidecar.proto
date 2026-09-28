@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package actions.v1;
+
+option go_package = "actions/gen/go/actions/v1;actionsv1";
+
+// Sidecar API available to handler binaries via $ACTIONS_SIDECAR_URL.
+// Backed by NATS KV (small KV) + SQLite meta, RustFS (blobs),
+// NATS JetStream (queue), stdout/slog (logs).
+service KvService {
+  rpc KvGet(KvGetRequest) returns (KvGetResponse);
+  rpc KvPut(KvPutRequest) returns (KvPutResponse);
+  rpc KvDel(KvDelRequest) returns (KvDelResponse);
+}
+
+service BlobService {
+  rpc BlobPutUrl(BlobPutUrlRequest) returns (BlobPutUrlResponse);
+  rpc BlobGetUrl(BlobGetUrlRequest) returns (BlobGetUrlResponse);
+}
+
+service QueueService {
+  rpc QueuePublish(QueuePublishRequest) returns (QueuePublishResponse);
+}
+
+service LogService {
+  rpc LogAppend(LogAppendRequest) returns (LogAppendResponse);
+}
+
+message KvGetRequest {
+  string function_name = 1;
+  string key = 2;
+}
+message KvGetResponse {
+  bytes value = 1;
+  bool found = 2;
+}
+message KvPutRequest {
+  string function_name = 1;
+  string key = 2;
+  bytes value = 3;
+  int64 ttl_seconds = 4;
+}
+message KvPutResponse {}
+message KvDelRequest {
+  string function_name = 1;
+  string key = 2;
+}
+message KvDelResponse {}
+
+message BlobPutUrlRequest {
+  string function_name = 1;
+  string key = 2;
+  int64 expires_seconds = 3;
+}
+message BlobPutUrlResponse {
+  string url = 1;
+}
+message BlobGetUrlRequest {
+  string function_name = 1;
+  string key = 2;
+  int64 expires_seconds = 3;
+}
+message BlobGetUrlResponse {
+  string url = 1;
+}
+
+message QueuePublishRequest {
+  string topic = 1;
+  bytes message = 2;
+}
+message QueuePublishResponse {}
+
+message LogAppendRequest {
+  string function_name = 1;
+  string version = 2;
+  string request_id = 3;
+  string line = 4;
+}
+message LogAppendResponse {}

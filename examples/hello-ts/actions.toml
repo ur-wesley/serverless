@@ -1,0 +1,6 @@
+name = "hello"
+runtime = "ts"
+route = "/f/hello"
+timeout_ms = 10000
+memory_mb = 256
+allow_egress = false

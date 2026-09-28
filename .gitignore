@@ -1,0 +1,7 @@
+/controlplane
+/actions
+*.db
+*.db-wal
+*.db-shm
+*.zip
+/data/

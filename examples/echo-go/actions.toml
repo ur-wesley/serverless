@@ -1,0 +1,7 @@
+name = "echo"
+runtime = "go"
+route = "/f/echo"
+timeout_ms = 10000
+memory_mb = 256
+allow_egress = false
+queue = ["orders.created"]

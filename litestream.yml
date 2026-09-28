@@ -1,0 +1,10 @@
+# Optional SQLite backup: Litestream replicates /data/actions.db to RustFS (S3).
+# Enable with: docker compose --profile backup up
+dbs:
+  - path: /data/actions.db
+    replicas:
+      - url: s3://actions/litestream/actions.db
+        endpoint: http://rustfs:9000
+        access-key-id: minioadmin
+        secret-access-key: minioadmin
+        force-path-style: true

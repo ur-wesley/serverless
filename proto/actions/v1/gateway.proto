@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package actions.v1;
+
+option go_package = "actions/gen/go/actions/v1;actionsv1";
+
+// Control-plane deploy API. Codegen source; runtime uses protojson
+// over HTTP so hand-rolled JSON without proto libs stays valid.
+service GatewayService {
+  rpc Deploy(DeployRequest) returns (DeployResponse);
+  rpc GetFunction(GetFunctionRequest) returns (GetFunctionResponse);
+  rpc ListFunctions(ListFunctionsRequest) returns (ListFunctionsResponse);
+}
+
+message DeployRequest {
+  string name = 1;
+  string config_toml = 2;
+  // S3/RustFS key or presigned URL of src.zip uploaded by the CLI.
+  string src_zip_ref = 3;
+}
+
+message DeployResponse {
+  string name = 1;
+  string version = 2;
+  string status = 3; // queued | building | active | failed
+}
+
+message GetFunctionRequest {
+  string name = 1;
+}
+
+message GetFunctionResponse {
+  string name = 1;
+  string active_version = 2;
+  string config_toml = 3;
+}
+
+message ListFunctionsRequest {}
+
+message ListFunctionsResponse {
+  repeated GetFunctionResponse functions = 1;
+}

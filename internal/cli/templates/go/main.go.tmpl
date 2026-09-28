@@ -1,0 +1,61 @@
+// {{.Name}}: minimal ABI handler (GET /healthz, POST /invoke).
+// Bodies on the wire are base64 (bytes fields in events.proto).
+package main
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+)
+
+func b64encode(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
+
+func b64decode(s string) []byte {
+	if s == "" {
+		return nil
+	}
+	b, _ := base64.StdEncoding.DecodeString(s)
+	return b
+}
+
+func main() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("POST /invoke", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Event struct {
+				Method string `json:"method"`
+				Path   string `json:"path"`
+				Body   string `json:"body"`
+			} `json:"event"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&in); err != nil {
+			writeResp(w, 400, "bad invoke JSON")
+			return
+		}
+		text := fmt.Sprintf("hello from {{.Name}} %s %s body=%s", in.Event.Method, in.Event.Path, string(b64decode(in.Event.Body)))
+		writeResp(w, 200, text)
+	})
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "3000"
+	}
+	slog.Info("listening", "port", port)
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
+		slog.Error("exited", "err", err)
+		os.Exit(1)
+	}
+}
+
+func writeResp(w http.ResponseWriter, status int, text string) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status": status, "headers": map[string]string{"content-type": "text/plain"},
+		"body": b64encode([]byte(text)),
+	})
+}

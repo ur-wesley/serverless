@@ -1,0 +1,6 @@
+name = "hello-go"
+runtime = "go"
+route = "/f/hello-go"
+timeout_ms = 10000
+memory_mb = 256
+allow_egress = false

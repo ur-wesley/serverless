@@ -1,0 +1,17 @@
+name: buf
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  buf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: bufbuild/buf-setup-action@v1
+      - run: buf lint
+      - run: buf breaking --against '.git#branch=main'
+      - run: buf generate --validate-only
