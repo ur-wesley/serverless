@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -175,8 +177,28 @@ func main() {
 	}
 	slog.Info("controlplane listening", "port", port, "sqlite", sqlitePath, "sidecar", sidecarURL,
 		"sandbox", os.Getenv("RUNNER_SANDBOX_NET") != "")
+	logSelfInspect()
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("server exited", "err", err)
 		os.Exit(1)
 	}
+}
+
+// logSelfInspect shells out to `docker inspect` on our own container (docker.sock
+// is mounted) and logs labels + networks. Temporary diagnostic for Traefik routing.
+func logSelfInspect() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	hn, _ := os.Hostname()
+	out, err := exec.CommandContext(ctx, "docker", "inspect", hn, "--format",
+		"networks={{json .NetworkSettings.Networks}} labels={{json .Config.Labels}}").CombinedOutput()
+	if err != nil {
+		slog.Warn("self-inspect failed", "err", err, "out", strings.TrimSpace(string(out)))
+		return
+	}
+	s := strings.TrimSpace(string(out))
+	if len(s) > 3000 {
+		s = s[:3000] + "...[truncated]"
+	}
+	slog.Info("self-inspect", "hostname", hn, "detail", s)
 }
