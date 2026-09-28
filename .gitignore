@@ -4,4 +4,6 @@
 *.db-wal
 *.db-shm
 *.zip
+*.exe
 /data/
+node_modules/
