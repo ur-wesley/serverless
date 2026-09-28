@@ -100,6 +100,23 @@ func quote(s string) string {
 	return string(b)
 }
 
+func TestCheckKeyOwnerScoped(t *testing.T) {
+	st := openTest(t)
+	ha, _ := auth.HashPassword("password123")
+	alice, _ := st.CreateUser("alice", ha)
+	hb, _ := auth.HashPassword("password123")
+	bob, _ := st.CreateUser("bob", hb)
+	_ = st.UpsertFunctionOwned(alice.ID, "hello", "v1", "name=\"hello\"", "slug0001", "key")
+	full, _, hash, _ := auth.NewAPIKey()
+	_ = full
+	if _, err := st.CreateAPIKey(bob.ID, "hello", "ci", "ab", hash); err != nil {
+		t.Fatal(err)
+	}
+	if CheckKey(st, "hello", full) {
+		t.Fatal("bob key must not validate for alice function")
+	}
+}
+
 func TestRequireOperatorBootstrapOpen(t *testing.T) {
 	st := openTest(t)
 	ok := RequireOperator(st, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
@@ -173,5 +190,88 @@ func TestKeysCRUD(t *testing.T) {
 	}
 	if CheckKey(st, "hello", c.Key) {
 		t.Fatal("revoked key still valid")
+	}
+}
+
+func TestDeviceLoginHTMLStates(t *testing.T) {
+	st := openTest(t)
+	mux := http.NewServeMux()
+	RegisterAuthRoutes(mux, st)
+
+	start := func() (userCode string) {
+		req := httptest.NewRequest("POST", "/auth/device/start", strings.NewReader(`{"device_name":"browser"}`))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != 200 {
+			t.Fatalf("start = %d", rec.Code)
+		}
+		var out struct {
+			UserCode string `json:"user_code"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return out.UserCode
+	}
+
+	// Form renders with dark layout.
+	code := start()
+	r := httptest.NewRequest("GET", "/auth/device?code="+code, nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("form = %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{"device verification", `id="login-form"`, "Create your account"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("form missing %q", want)
+		}
+	}
+
+	// Unknown code -> styled expired page.
+	r = httptest.NewRequest("GET", "/auth/device?code=NOPE-0000", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusGone {
+		t.Fatalf("expired = %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "login link expired") {
+		t.Fatalf("expired page not styled: %s", w.Body.String())
+	}
+
+	// Browser form POST with short password -> 400 inline banner, username kept.
+	form := "user_code=" + code + "&username=bob&password=short"
+	r = httptest.NewRequest("POST", "/auth/device/approve", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("short pw = %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `role="alert"`) || !strings.Contains(w.Body.String(), `value="bob"`) {
+		t.Fatalf("form error not inline/preserved: %s", w.Body.String())
+	}
+
+	// Valid first-account creation via browser form -> styled success.
+	form = "user_code=" + code + "&username=bob&password=password123"
+	r = httptest.NewRequest("POST", "/auth/device/approve", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "Verified") {
+		t.Fatalf("verify = %d: %s", w.Code, w.Body.String())
+	}
+
+	// Second device, wrong password -> 401 inline banner.
+	code2 := start()
+	form = "user_code=" + code2 + "&username=bob&password=wrongpass1"
+	r = httptest.NewRequest("POST", "/auth/device/approve", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("bad creds = %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Invalid username or password") {
+		t.Fatalf("bad creds page missing message: %s", w.Body.String())
 	}
 }

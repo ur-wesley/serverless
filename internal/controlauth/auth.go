@@ -139,6 +139,9 @@ func mustRef(st *store.Store, fn store.Function, sidecarURL string) runner.Funct
 }
 
 // CheckKey verifies an API key for fn and touches last_used_at.
+// The key's owner must match the function's owner (legacy unowned functions
+// accept legacy unowned keys) so same-named functions across owners can't
+// reuse each other's keys.
 func CheckKey(st *store.Store, fnName, key string) bool {
 	if key == "" {
 		return false
@@ -147,8 +150,28 @@ func CheckKey(st *store.Store, fnName, key string) bool {
 	if !ok {
 		return false
 	}
+	if fn, err := st.GetFunction(fnName); err == nil {
+		if fn.OwnerID != "" && k.OwnerID != "" && fn.OwnerID != k.OwnerID {
+			return false
+		}
+		if fn.OwnerID != "" && k.OwnerID == "" {
+			return false
+		}
+	}
 	st.TouchAPIKey(k.ID)
 	return true
+}
+
+// FindAPIKeyScoped locates a non-revoked key for an owner+function pair.
+func FindAPIKeyScoped(st *store.Store, ownerID, fnName, keyHash string) (store.APIKey, bool) {
+	k, ok := st.FindAPIKey(fnName, keyHash)
+	if !ok {
+		return store.APIKey{}, false
+	}
+	if ownerID != "" && k.OwnerID != "" && k.OwnerID != ownerID {
+		return store.APIKey{}, false
+	}
+	return k, true
 }
 
 // --- device flow ---
@@ -196,22 +219,35 @@ func RegisterAuthRoutes(mux *http.ServeMux, st *store.Store) {
 			if err == nil {
 				st.DeleteDevice(d.CodeHash)
 			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusGone)
-			_, _ = w.Write([]byte("code expired or unknown — run `actions login` again"))
+			_, _ = fmt.Fprint(w, deviceStatusPage(statusPageArgs{
+				Kind:    "expired",
+				Title:   "Link expired",
+				Heading: "This login link expired",
+				Message: "Device codes are valid for 10 minutes. Run `actions login` again in your terminal to get a fresh code.",
+			}))
 			return
 		}
 		if d.Status != "pending" {
-			_, _ = w.Write([]byte("already verified — return to your terminal"))
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = fmt.Fprint(w, deviceStatusPage(statusPageArgs{
+				Kind:    "info",
+				Title:   "Already verified",
+				Heading: "Already verified",
+				Message: "This device was already approved. Return to your terminal — login will complete automatically.",
+			}))
 			return
 		}
 		first := st.CountUsers() == 0
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = fmt.Fprint(w, devicePage(code, first))
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprint(w, deviceLoginPage(code, first, r.URL.Query().Get("error"), ""))
 	})
 
 	mux.HandleFunc("POST /auth/device/approve", func(w http.ResponseWriter, r *http.Request) {
 		var userCode, username, password string
-		if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+		isJSON := strings.Contains(r.Header.Get("Content-Type"), "application/json")
+		if isJSON {
 			var in struct {
 				UserCode string `json:"user_code"`
 				Username string `json:"username"`
@@ -228,37 +264,87 @@ func RegisterAuthRoutes(mux *http.ServeMux, st *store.Store) {
 			username = r.FormValue("username")
 			password = r.FormValue("password")
 		}
+		// renderForm re-displays the styled browser form with an inline
+		// error banner (preserving the typed username). JSON callers get
+		// the original plain-text status codes.
+		renderForm := func(msg string, status int, first bool, code, preservedUser string) {
+			if isJSON {
+				http.Error(w, msg, status)
+				return
+			}
+			if code == "" {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.WriteHeader(status)
+				_, _ = fmt.Fprint(w, deviceStatusPage(statusPageArgs{
+					Kind:    "expired",
+					Title:   "Link expired",
+					Heading: "This login link expired",
+					Message: msg + " Run `actions login` again for a fresh code.",
+				}))
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(status)
+			_, _ = fmt.Fprint(w, deviceLoginPage(code, first, msg, preservedUser))
+		}
+		if strings.TrimSpace(userCode) == "" {
+			if isJSON {
+				http.Error(w, "user_code required", http.StatusBadRequest)
+			} else {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = fmt.Fprint(w, deviceStatusPage(statusPageArgs{
+					Kind:    "error",
+					Title:   "Missing code",
+					Heading: "Verification code missing",
+					Message: "Open this page from the link printed by `actions login` so the device code is included.",
+				}))
+			}
+			return
+		}
 		d, err := st.GetDeviceByUserCode(userCode)
 		if err != nil || expired(d.ExpiresAt) {
 			if err == nil {
 				st.DeleteDevice(d.CodeHash)
 			}
-			http.Error(w, "code expired", http.StatusGone)
+			if isJSON {
+				http.Error(w, "code expired", http.StatusGone)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusGone)
+			_, _ = fmt.Fprint(w, deviceStatusPage(statusPageArgs{
+				Kind:    "expired",
+				Title:   "Link expired",
+				Heading: "This login link expired",
+				Message: "This code is unknown or older than 10 minutes. Run `actions login` again for a fresh code.",
+			}))
 			return
 		}
+		first := st.CountUsers() == 0
 		username = strings.ToLower(strings.TrimSpace(username))
 		if err := auth.ValidateUsername(username); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			renderForm(err.Error(), http.StatusBadRequest, first, userCode, username)
 			return
 		}
 		var userID string
-		if st.CountUsers() == 0 {
+		if first {
 			// First verification creates the first account.
 			h, err := auth.HashPassword(password)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				renderForm(err.Error(), http.StatusBadRequest, true, userCode, username)
 				return
 			}
 			u, err := st.CreateUser(username, h)
 			if err != nil {
-				http.Error(w, "username taken", http.StatusConflict)
+				renderForm("That username is already taken — pick another one.", http.StatusConflict, true, userCode, username)
 				return
 			}
 			userID = u.ID
 		} else {
 			u, err := st.CheckUserPassword(username, password, auth.CheckPassword)
 			if err != nil {
-				http.Error(w, "invalid credentials", http.StatusUnauthorized)
+				renderForm("Invalid username or password. Check caps lock and try again.", http.StatusUnauthorized, false, userCode, username)
 				return
 			}
 			userID = u.ID
@@ -266,17 +352,32 @@ func RegisterAuthRoutes(mux *http.ServeMux, st *store.Store) {
 		// Backfill legacy unowned functions to the first user.
 		backfillOwner(st, userID)
 		if err := st.ApproveDevice(userCode, userID, ""); err != nil {
-			http.Error(w, "approve failed", http.StatusInternalServerError)
+			if isJSON {
+				http.Error(w, "approve failed", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(w, deviceStatusPage(statusPageArgs{
+				Kind:    "error",
+				Title:   "Something went wrong",
+				Heading: "Couldn't verify this device",
+				Message: "Please go back and try again. If it keeps failing, run `actions login` for a fresh code.",
+			}))
 			return
 		}
-		if strings.Contains(r.Header.Get("Accept"), "application/json") ||
-			strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+		if isJSON ||
+			strings.Contains(r.Header.Get("Accept"), "application/json") {
 			writeJSON(w, map[string]any{"ok": true})
 			return
 		}
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(`<html><body style="font-family:sans-serif;max-width:480px;margin:4em auto">` +
-			`<h2>Verified ✓</h2><p>Return to your terminal — login will complete automatically.</p></body></html>`))
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprint(w, deviceStatusPage(statusPageArgs{
+			Kind:    "success",
+			Title:   "Verified",
+			Heading: "Verified — you're in",
+			Message: "Return to your terminal — login will complete automatically. You can close this tab.",
+		}))
 	})
 
 	mux.HandleFunc("POST /auth/device/poll", func(w http.ResponseWriter, r *http.Request) {
@@ -361,22 +462,121 @@ func expired(raw string) bool {
 	return time.Now().After(t)
 }
 
-func devicePage(code string, first bool) string {
-	title, hint := "Log in this device", "Enter your username + password to verify this CLI login."
-	action := "Log in &amp; verify"
+type statusPageArgs struct {
+	Kind    string // success | expired | info | error
+	Title   string
+	Heading string
+	Message string
+}
+
+// loginShell wraps body in a clean, dark, responsive layout. No external
+// assets — single inline stylesheet so the control plane serves it as-is.
+func loginShell(title, body string) string {
+	return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
+		`<meta name="viewport" content="width=device-width,initial-scale=1">` +
+		`<meta name="color-scheme" content="dark">` +
+		`<title>` + html.EscapeString(title) + ` — Actions</title><style>` +
+		`:root{color-scheme:dark;--bg:#0b0f14;--card:#141b25;--border:#26303d;` +
+		`--text:#e6edf3;--muted:#8b949e;--accent:#2f81f7;--accent-h:#1f6feb;` +
+		`--danger-bg:#3d1a1e;--danger-bd:#7a2e35;--danger-tx:#ffb4ab;` +
+		`--ok-bg:#12291c;--ok-bd:#1f5c38;--ok-tx:#7ee2a8;` +
+		`--warn-bg:#33230a;--warn-bd:#7a5410;--warn-tx:#ffce59;` +
+		`--info-bg:#12233a;--info-bd:#24507e;--info-tx:#9ecbff}` +
+		`*{box-sizing:border-box}body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#16202e 0%,var(--bg) 55%) fixed,var(--bg);` +
+		`color:var(--text);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;` +
+		`-webkit-font-smoothing:antialiased}` +
+		`.wrap{max-width:460px;margin:0 auto;padding:56px 20px 48px}` +
+		`.brand{display:flex;align-items:center;gap:10px;margin-bottom:20px}` +
+		`.dot{width:11px;height:11px;border-radius:50%;background:var(--accent);box-shadow:0 0 14px var(--accent)}` +
+		`.brand b{font-size:15px;letter-spacing:.02em}.brand span{color:var(--muted);font-size:13px}` +
+		`.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:28px;box-shadow:0 18px 50px rgba(0,0,0,.45)}` +
+		`h1{font-size:22px;line-height:1.25;margin:0 0 6px}.sub{color:var(--muted);font-size:14px;margin:0 0 18px}` +
+		`.alert{border-radius:10px;padding:11px 13px;font-size:14px;margin:0 0 16px;border:1px solid var(--danger-bd);background:var(--danger-bg);color:var(--danger-tx)}` +
+		`.code-row{display:flex;align-items:center;gap:10px;background:#0d1117;border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin:0 0 18px}` +
+		`.code-row code{font:700 15px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.06em}` +
+		`.code-row button{margin-left:auto;background:#1c2532;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12.5px;cursor:pointer}` +
+		`.code-row button:hover{border-color:var(--accent)}` +
+		`label{display:block;font-size:13.5px;font-weight:600;margin:14px 0 6px}` +
+		`input{width:100%;background:#0d1117;border:1px solid #30363d;color:var(--text);border-radius:9px;padding:11px 12px;font-size:15px}` +
+		`input:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}` +
+		`.hint{color:var(--muted);font-size:12.5px;margin:5px 0 0;font-weight:400}` +
+		`.btn{width:100%;margin-top:20px;background:var(--accent);border:0;color:#fff;font-weight:650;font-size:15px;border-radius:9px;padding:12px;cursor:pointer}` +
+		`.btn:hover{background:var(--accent-h)}.btn:disabled{opacity:.6;cursor:wait}` +
+		`.meta{color:var(--muted);font-size:13px;margin:16px 0 0}.meta code{font-size:12.5px}` +
+		`.status{display:flex;gap:12px;align-items:flex-start;border-radius:10px;padding:13px 14px;font-size:14px;margin:0 0 6px;border:1px solid}` +
+		`.status .ic{font-size:18px;line-height:1.3}.status.ok{background:var(--ok-bg);border-color:var(--ok-bd);color:var(--ok-tx)}` +
+		`.status.expired{background:var(--warn-bg);border-color:var(--warn-bd);color:var(--warn-tx)}` +
+		`.status.info{background:var(--info-bg);border-color:var(--info-bd);color:var(--info-tx)}` +
+		`.status.error{background:var(--danger-bg);border-color:var(--danger-bd);color:var(--danger-tx)}` +
+		`.foot{color:var(--muted);font-size:12.5px;text-align:center;margin:18px 0 0}` +
+		`a{color:#6ea8fe}@media(max-width:520px){.wrap{padding-top:32px}.card{padding:22px}}` +
+		`</style></head><body><main class="wrap">` +
+		`<div class="brand"><span class="dot" aria-hidden="true"></span><b>Actions</b><span>device verification</span></div>` +
+		`<div class="card">` + body + `</div>` +
+		`<p class="foot">Code expires 10 minutes after <code>actions login</code> &middot; never share your password</p>` +
+		`</main><script>` +
+		`var f=document.getElementById("login-form"),b=document.getElementById("login-btn");` +
+		`if(f&&b){f.addEventListener("submit",function(){b.disabled=true;b.textContent="Verifying…";});}` +
+		`function copyCode(){var el=document.getElementById("ucode");if(!el)return;` +
+		`var t=el.textContent||"";if(navigator.clipboard){navigator.clipboard.writeText(t);}` +
+		`var btn=document.getElementById("copy-btn");if(btn){btn.textContent="Copied";setTimeout(function(){btn.textContent="Copy";},1500);}}` +
+		`</script></body></html>`
+}
+
+// deviceLoginPage renders the username/password form. errMsg (already
+// user-friendly) is shown as an inline banner; username is preserved.
+func deviceLoginPage(code string, first bool, errMsg, username string) string {
+	title, hint, action := "Log in this device", "Enter your username + password to verify this CLI login.", "Log in & verify"
 	if first {
 		title = "Create your account"
 		hint = "No users exist yet — this creates the first account (instance owner)."
-		action = "Create account &amp; verify"
+		action = "Create account & verify"
 	}
-	return `<html><body style="font-family:sans-serif;max-width:480px;margin:4em auto">` +
-		`<h2>` + title + `</h2><p>` + hint + `</p>` +
-		`<p>Device code: <code>` + html.EscapeString(code) + `</code></p>` +
-		`<form method="POST" action="/auth/device/approve">` +
-		`<input type="hidden" name="user_code" value="` + html.EscapeString(code) + `">` +
-		`<p><label>Username<br><input name="username" autocomplete="username" required minlength="2" maxlength="32"></label></p>` +
-		`<p><label>Password<br><input name="password" type="password" autocomplete="current-password" required minlength="8"></label></p>` +
-		`<p><button type="submit">` + action + `</button></p></form></body></html>`
+	var sb strings.Builder
+	sb.WriteString(`<h1>` + html.EscapeString(title) + `</h1>`)
+	sb.WriteString(`<p class="sub">` + html.EscapeString(hint) + `</p>`)
+	if strings.TrimSpace(errMsg) != "" {
+		sb.WriteString(`<div class="alert" role="alert">` + html.EscapeString(errMsg) + `</div>`)
+	}
+	sb.WriteString(`<div class="code-row" title="Device code from your terminal">` +
+		`<span aria-hidden="true">⌁</span><code id="ucode">` + html.EscapeString(code) + `</code>` +
+		`<button type="button" id="copy-btn" onclick="copyCode()">Copy</button></div>`)
+	sb.WriteString(`<form id="login-form" method="POST" action="/auth/device/approve">`)
+	sb.WriteString(`<input type="hidden" name="user_code" value="` + html.EscapeString(code) + `">`)
+	sb.WriteString(`<label for="username">Username</label>`)
+	sb.WriteString(`<input id="username" name="username" autocomplete="username" required minlength="2" maxlength="32" pattern="[A-Za-z0-9-_]{2,32}" value="` + html.EscapeString(username) + `">`)
+	sb.WriteString(`<p class="hint">2–32 chars: lowercase letters, numbers, - or _.</p>`)
+	sb.WriteString(`<label for="password">Password</label>`)
+	autocomplete := "current-password"
+	if first {
+		autocomplete = "new-password"
+	}
+	sb.WriteString(`<input id="password" name="password" type="password" autocomplete="` + autocomplete + `" required minlength="8">`)
+	if first {
+		sb.WriteString(`<p class="hint">Minimum 8 characters — this becomes the owner password.</p>`)
+	} else {
+		sb.WriteString(`<p class="hint">The password you used with <code>actions login</code> before.</p>`)
+	}
+	sb.WriteString(`<button class="btn" id="login-btn" type="submit">` + html.EscapeString(action) + `</button>`)
+	sb.WriteString(`</form>`)
+	sb.WriteString(`<p class="meta">Wrong code? Run <code>actions login</code> again for a fresh link.</p>`)
+	return loginShell(title, sb.String())
+}
+
+// deviceStatusPage renders expired / verified / error outcomes.
+func deviceStatusPage(a statusPageArgs) string {
+	icon := "ℹ"
+	switch a.Kind {
+	case "success":
+		icon = "✓"
+	case "expired":
+		icon = "⏳"
+	case "error":
+		icon = "⚠"
+	}
+	body := `<div class="status ` + html.EscapeString(a.Kind) + `"><span class="ic" aria-hidden="true">` + icon + `</span>` +
+		`<div><strong>` + html.EscapeString(a.Heading) + `</strong><br>` + html.EscapeString(a.Message) + `</div></div>`
+	return loginShell(a.Title, `<h1>`+html.EscapeString(a.Heading)+`</h1><p class="sub">`+html.EscapeString(a.Message)+`</p>`+body)
 }
 
 // --- api keys ---

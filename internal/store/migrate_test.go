@@ -78,8 +78,8 @@ func TestOpenMigratesLegacyDB(t *testing.T) {
 		t.Fatal("slug changed on reopen")
 	}
 	var ver int64
-	if err := s2.db.QueryRow(`SELECT max(version_id) FROM goose_db_version`).Scan(&ver); err != nil || ver != 2 {
-		t.Fatalf("goose version = %d, err = %v; want 2", ver, err)
+	if err := s2.db.QueryRow(`SELECT max(version_id) FROM goose_db_version`).Scan(&ver); err != nil || ver != 4 {
+		t.Fatalf("goose version = %d, err = %v; want 4", ver, err)
 	}
 }
 
@@ -134,7 +134,7 @@ func TestOpenHandMigratedDB(t *testing.T) {
 		t.Fatalf("slug = %q, want preserved keepme01", f.Slug)
 	}
 	var ver int64
-	if err := s.db.QueryRow(`SELECT max(version_id) FROM goose_db_version`).Scan(&ver); err != nil || ver != 2 {
-		t.Fatalf("goose version = %d, err = %v; want 2", ver, err)
+	if err := s.db.QueryRow(`SELECT max(version_id) FROM goose_db_version`).Scan(&ver); err != nil || ver != 4 {
+		t.Fatalf("goose version = %d, err = %v; want 4", ver, err)
 	}
 }

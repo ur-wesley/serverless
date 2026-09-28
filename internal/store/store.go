@@ -146,9 +146,10 @@ func (s *Store) migrate() error {
 // baselineLegacy handles databases created before goose was introduced
 // (no goose_db_version table):
 //   - true legacy (old tables, no slug column): nothing to stamp; goose.Up
-//     runs 00001 as a no-op (IF NOT EXISTS) and applies 00002.
+//     runs 00001 as a no-op (IF NOT EXISTS) and applies 00002+00003.
 //   - already migrated by the previous hand-rolled code (slug column
-//     present): stamp version 2 so goose does not re-run the ALTERs.
+//     present): ensure auth tables exist (hand-rolled code only added
+//     columns), then stamp versions 1-3 so goose does not re-run ALTERs.
 func (s *Store) baselineLegacy() error {
 	var name string
 	if err := s.db.QueryRow(
@@ -166,12 +167,29 @@ func (s *Store) baselineLegacy() error {
 		return err
 	}
 	if !hasColumn(s.db, "functions", "slug") {
-		return nil // true legacy; let goose.Up apply 00001 (no-op) + 00002
+		return nil // true legacy; let goose.Up apply 00001 (no-op) + 00002 + 00003
 	}
-	// Mark 00001+00002 applied: 00001 is a no-op on existing tables and the
-	// ALTERs/indexes of 00002 are already in place. Both rows are needed —
+	for _, stmt := range []string{
+		`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')))`,
+		`CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')), expires_at TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS device_codes (code_hash TEXT PRIMARY KEY, user_code TEXT NOT NULL UNIQUE, user_id TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', token_hash TEXT NOT NULL DEFAULT '', device_name TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')), expires_at TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, fn_name TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', prefix TEXT NOT NULL DEFAULT '', key_hash TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')), revoked_at TEXT NOT NULL DEFAULT '', last_used_at TEXT NOT NULL DEFAULT '')`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_functions_slug ON functions(slug) WHERE slug != ''`,
+		`CREATE INDEX IF NOT EXISTS idx_functions_owner ON functions(owner_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_keys_fn ON api_keys(owner_id, fn_name)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_fn_hash ON api_keys(fn_name, key_hash) WHERE revoked_at = ''`,
+		`CREATE TABLE IF NOT EXISTS deploy_jobs (id TEXT PRIMARY KEY, fn_name TEXT NOT NULL, owner_id TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'queued', config_toml TEXT NOT NULL DEFAULT '', version TEXT NOT NULL DEFAULT '', image TEXT NOT NULL DEFAULT '', sha256 TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', log_key TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')))`,
+		`CREATE INDEX IF NOT EXISTS idx_jobs_fn ON deploy_jobs(fn_name, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_jobs_status ON deploy_jobs(status, created_at)`,
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	// Mark 00001-00004 applied. All rows are needed —
 	// goose refuses gaps before the current version.
-	for _, v := range []int64{1, 2} {
+	for _, v := range []int64{1, 2, 3, 4} {
 		if _, err := s.db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (?, 1)`, v); err != nil {
 			return err
 		}
@@ -399,14 +417,41 @@ func (s *Store) ActiveVersionCreatedAt(name, ver string) string {
 	return created
 }
 
-// NextVersion returns v<N> where N = existing count + 1.
-func (s *Store) NextVersion(name string) (string, error) {
-	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM versions WHERE name = ?`, name).Scan(&n)
+// ListVersions returns all versions for a function, oldest first.
+func (s *Store) ListVersions(name string) ([]Version, error) {
+	rows, err := s.db.Query(
+		`SELECT name, ver, sha256, handler_key, config_json, status, owner_id FROM versions WHERE name = ? ORDER BY created_at, ver`, name)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return fmt.Sprintf("v%d", n+1), nil
+	defer rows.Close()
+	var out []Version
+	for rows.Next() {
+		var v Version
+		if err := rows.Scan(&v.Name, &v.Ver, &v.SHA256, &v.HandlerKey, &v.ConfigJSON, &v.Status, &v.OwnerID); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// SetActiveVersion points a function at an existing version.
+func (s *Store) SetActiveVersion(name, ver string) error {
+	if _, err := s.GetVersion(name, ver); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`UPDATE functions SET active_version = ? WHERE name = ?`, ver, name)
+	return err
+}
+
+// DeleteFunction removes a function and its versions.
+func (s *Store) DeleteFunction(name string) error {
+	if _, err := s.db.Exec(`DELETE FROM versions WHERE name = ?`, name); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM functions WHERE name = ?`, name)
+	return err
 }
 
 // --- users ---
@@ -588,4 +633,138 @@ func (s *Store) RevokeAPIKey(ownerID, id string) error {
 
 func (s *Store) TouchAPIKey(id string) {
 	_, _ = s.db.Exec(`UPDATE api_keys SET last_used_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?`, id)
+}
+
+// --- deploy jobs ---
+
+// Job statuses for the async deploy queue.
+const (
+	JobQueued   = "queued"
+	JobBuilding = "building"
+	JobActive   = "active"
+	JobFailed   = "failed"
+)
+
+type Job struct {
+	ID         string `json:"id"`
+	FnName     string `json:"fn_name"`
+	OwnerID    string `json:"owner_id"`
+	Status     string `json:"status"`
+	ConfigTOML string `json:"-"`
+	Version    string `json:"version"`
+	Image      string `json:"image"`
+	SHA256     string `json:"sha256"`
+	Error      string `json:"error"`
+	LogKey     string `json:"log_key"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
+func scanJob(row interface {
+	Scan(dest ...any) error
+}) (Job, error) {
+	var j Job
+	err := row.Scan(&j.ID, &j.FnName, &j.OwnerID, &j.Status, &j.ConfigTOML,
+		&j.Version, &j.Image, &j.SHA256, &j.Error, &j.LogKey, &j.CreatedAt, &j.UpdatedAt)
+	return j, err
+}
+
+const jobColumns = `id, fn_name, owner_id, status, config_toml, version, image, sha256, error, log_key, created_at, updated_at`
+
+// CreateJob enqueues a deploy. Version must already be resolved
+// (deploy.ResolveVersion under the per-function lock).
+func (s *Store) CreateJob(ownerID, fnName, configTOML, version string) (Job, error) {
+	j := Job{
+		ID: newID(16), FnName: fnName, OwnerID: ownerID,
+		Status: JobQueued, ConfigTOML: configTOML, Version: version,
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO deploy_jobs (id, fn_name, owner_id, status, config_toml, version) VALUES (?, ?, ?, ?, ?, ?)`,
+		j.ID, j.FnName, j.OwnerID, j.Status, j.ConfigTOML, j.Version)
+	if err != nil {
+		return Job{}, err
+	}
+	return s.GetJob(j.ID)
+}
+
+func (s *Store) GetJob(id string) (Job, error) {
+	return scanJob(s.db.QueryRow(
+		`SELECT `+jobColumns+` FROM deploy_jobs WHERE id = ?`, id))
+}
+
+// ListJobs returns a function's jobs, newest first (limit <= 0 means 50).
+func (s *Store) ListJobs(fnName string, limit int) ([]Job, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.Query(
+		`SELECT `+jobColumns+` FROM deploy_jobs WHERE fn_name = ? ORDER BY created_at DESC, rowid DESC LIMIT ?`, fnName, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Job
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// UpdateJobStatus sets status plus any provided fields (version/image/sha on
+// success, error on failure), bumping updated_at.
+func (s *Store) UpdateJobStatus(id, status, version, image, sha, jobErr string) error {
+	_, err := s.db.Exec(
+		`UPDATE deploy_jobs SET status = ?, version = ?, image = ?, sha256 = ?, error = ?,
+		 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?`,
+		status, version, image, sha, jobErr, id)
+	return err
+}
+
+// SetJobLogKey records where the build log artifact lives.
+func (s *Store) SetJobLogKey(id, logKey string) error {
+	_, err := s.db.Exec(
+		`UPDATE deploy_jobs SET log_key = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?`,
+		logKey, id)
+	return err
+}
+
+// ClaimNextJob atomically moves the oldest queued job to building.
+// Returns ok=false when the queue is empty.
+func (s *Store) ClaimNextJob() (Job, bool) {
+	var id string
+	if err := s.db.QueryRow(
+		`SELECT id FROM deploy_jobs WHERE status = 'queued' ORDER BY created_at, rowid LIMIT 1`).Scan(&id); err != nil {
+		return Job{}, false
+	}
+	res, err := s.db.Exec(
+		`UPDATE deploy_jobs SET status = 'building', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+		 WHERE id = ? AND status = 'queued'`, id)
+	if err != nil {
+		return Job{}, false
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return Job{}, false
+	}
+	j, err := s.GetJob(id)
+	if err != nil {
+		return Job{}, false
+	}
+	return j, true
+}
+
+// RequeueStuck moves jobs left in building (previous crash) back to queued.
+// Returns the number requeued.
+func (s *Store) RequeueStuck() int {
+	res, err := s.db.Exec(
+		`UPDATE deploy_jobs SET status = 'queued', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+		 WHERE status = 'building'`)
+	if err != nil {
+		return 0
+	}
+	n, _ := res.RowsAffected()
+	return int(n)
 }

@@ -61,3 +61,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_functions_slug ON functions(slug) WHERE sl
 CREATE INDEX IF NOT EXISTS idx_functions_owner ON functions(owner_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_fn ON api_keys(owner_id, fn_name);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_fn_hash ON api_keys(fn_name, key_hash) WHERE revoked_at = '';
+
+CREATE TABLE IF NOT EXISTS deploy_jobs (
+  id TEXT PRIMARY KEY,
+  fn_name TEXT NOT NULL,
+  owner_id TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'queued',
+  config_toml TEXT NOT NULL DEFAULT '',
+  version TEXT NOT NULL DEFAULT '',
+  image TEXT NOT NULL DEFAULT '',
+  sha256 TEXT NOT NULL DEFAULT '',
+  error TEXT NOT NULL DEFAULT '',
+  log_key TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_fn ON deploy_jobs(fn_name, created_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON deploy_jobs(status, created_at);
