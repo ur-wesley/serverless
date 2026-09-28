@@ -63,15 +63,13 @@ jobs:
 
       - name: Build CLI (${{ matrix.goos }}/${{ matrix.goarch }})
         shell: bash
-        env:
-          CGO_ENABLED: "0"
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
         run: |
           set -euo pipefail
           mkdir -p dist
+          # Tests run on the host; only the binary build is cross-compiled
+          # (running go test under GOOS/GOARCH yields exec format error).
           go test ./internal/version/ ./internal/cli/ 2>/dev/null || go test ./internal/version/
-          go build -trimpath -ldflags "-s -w" -o "dist/${{ matrix.asset }}" ./cmd/actions
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -trimpath -ldflags "-s -w" -o "dist/${{ matrix.asset }}" ./cmd/actions
           ls -la dist/
 
       - uses: actions/upload-artifact@v4
