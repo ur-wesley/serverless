@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -204,30 +205,86 @@ func logSelfInspect() {
 		return
 	}
 	emitChunked("docker-ps", hn, strings.TrimSpace(string(ps)))
+	if out, err := exec.CommandContext(ctx, "docker", "version", "--format",
+		"client={{.Client.Version}}/{{.Client.ApiVersion}} server={{.Server.Version}}/{{.Server.ApiVersion}} min={{.Server.MinAPIVersion}}").CombinedOutput(); err != nil {
+		slog.Warn("docker version failed", "err", err)
+	} else {
+		slog.Info("docker-version", "detail", strings.TrimSpace(string(out)))
+	}
 	for _, line := range strings.Split(strings.TrimSpace(string(ps)), "\n") {
 		name := strings.SplitN(line, "|", 2)[0]
 		if !strings.Contains(strings.ToLower(line), "traefik") {
 			continue
 		}
-		lg, err := exec.CommandContext(ctx, "docker", "logs", "--tail", "200", name).CombinedOutput()
+		if strings.Contains(name, "cert-sync") || !strings.Contains(name, "dokploy-traefik") {
+			continue
+		}
+		env, err := exec.CommandContext(ctx, "docker", "inspect", name, "--format", "{{json .Config.Env}}").CombinedOutput()
+		if err != nil {
+			slog.Warn("traefik inspect failed", "container", name, "err", err)
+		} else {
+			emitChunked("traefik-env-"+name, hn, strings.TrimSpace(string(env)))
+		}
+		lg, err := exec.CommandContext(ctx, "docker", "logs", "--tail", "2000", name).CombinedOutput()
 		if err != nil {
 			slog.Warn("traefik logs failed", "container", name, "err", err)
 			continue
 		}
-		var hits []string
+		var firstErr, lastErr string
+		n := 0
 		for _, l := range strings.Split(string(lg), "\n") {
-			ll := strings.ToLower(l)
-			if strings.Contains(ll, "serverless") || strings.Contains(ll, "svr.w4y.io") ||
-				strings.Contains(ll, "error") || strings.Contains(ll, "ERR") {
-				hits = append(hits, l)
+			if strings.Contains(l, "ERR") || strings.Contains(strings.ToLower(l), "level=error") {
+				n++
+				clean := stripANSI(l)
+				if len(clean) > 300 {
+					clean = clean[:300]
+				}
+				if firstErr == "" {
+					firstErr = clean
+				}
+				lastErr = clean
 			}
 		}
-		if len(hits) > 30 {
-			hits = hits[len(hits)-30:]
+		slog.Info("traefik-err-summary", "container", name, "errLines", n, "first", firstErr, "last", lastErr)
+		// Try traefik API for router table (usually disabled; informative either way).
+		if api, err := exec.CommandContext(ctx, "wget", "-qO-", "--timeout=5",
+			"http://"+name+":8080/api/http/routers").CombinedOutput(); err != nil {
+			slog.Info("traefik-api", "container", name, "result", "unreachable: "+strings.TrimSpace(string(api)))
+		} else {
+			s := string(api)
+			hasOurs := strings.Contains(s, "svr.w4y.io") || strings.Contains(s, "serverless")
+			emitChunked("traefik-api-routers", hn, "hasOurs="+boolStr(hasOurs)+" len="+itoa(len(s))+" "+s)
 		}
-		emitChunked("traefik-log-"+name, hn, strings.Join(hits, "\n"))
 	}
 }
+
+func stripANSI(s string) string {
+	var b strings.Builder
+	esc := false
+	for _, r := range s {
+		if r == 0x1b {
+			esc = true
+			continue
+		}
+		if esc {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				esc = false
+			}
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func boolStr(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }
 
 func emitChunked(msg, hn, s string) {
 	if s == "" {
