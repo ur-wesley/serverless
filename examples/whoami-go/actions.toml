@@ -1,0 +1,6 @@
+name = "whoami"
+runtime = "go"
+route = "/f/whoami"
+timeout_ms = 10000
+memory_mb = 256
+allow_egress = false
