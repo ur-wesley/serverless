@@ -64,6 +64,13 @@ func main() {
 
 	tokens := sidecar.NewRegistry()
 	arts := artifacts.NewFromEnv()
+	if s3store, ok := arts.(*artifacts.S3); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if err := s3store.EnsureBucket(ctx); err != nil {
+			slog.Warn("artifacts bucket not ensured (deploys/blobs will fail until RustFS is reachable)", "err", err)
+		}
+		cancel()
+	}
 	backend := runner.NewDockerRunner(runner.Config{
 		Network:    getenv("RUNNER_NETWORK", "actions-net"),
 		SandboxNet: os.Getenv("RUNNER_SANDBOX_NET"), // set in compose; unset = dev mode

@@ -99,6 +99,17 @@ func (s *S3) Put(ctx context.Context, key string, data []byte) error {
 	return err
 }
 
+// EnsureBucket creates the bucket if it does not exist yet (fresh RustFS).
+// Called once at control-plane startup; deploy/blob calls fail clearly if it
+// could not be ensured.
+func (s *S3) EnsureBucket(ctx context.Context) error {
+	if _, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: &s.bucket}); err == nil {
+		return nil
+	}
+	_, err := s.client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &s.bucket})
+	return err
+}
+
 func (s *S3) Get(ctx context.Context, key string) ([]byte, error) {
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: &s.bucket, Key: &key})
 	if err != nil {
