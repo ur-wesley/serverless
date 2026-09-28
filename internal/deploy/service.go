@@ -22,6 +22,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"actions/internal/artifacts"
+	"actions/internal/auth"
 	"actions/internal/store"
 )
 
@@ -32,6 +33,7 @@ type Config struct {
 	TimeoutMs   int      `toml:"timeout_ms"`
 	MemoryMB    int      `toml:"memory_mb"`
 	AllowEgress bool     `toml:"allow_egress"`
+	AuthMode    string   `toml:"auth_mode"`
 	Cron        []string `toml:"cron"`
 	Queue       []string `toml:"queue"`
 }
@@ -40,6 +42,7 @@ type Request struct {
 	Name       string
 	ConfigTOML string
 	SrcZip     []byte
+	OwnerID    string
 }
 
 type Result struct {
@@ -56,10 +59,10 @@ type BuildFunc func(ctx context.Context, srcDir, runtime, outImage string) error
 type ExtractFunc func(ctx context.Context, outImage string) ([]byte, error)
 
 type Service struct {
-	Store     *store.Store
-	Artifacts artifacts.Store
-	Build     BuildFunc
-	Extract   ExtractFunc
+	Store       *store.Store
+	Artifacts   artifacts.Store
+	Build       BuildFunc
+	Extract     ExtractFunc
 	BuildersDir string // dir containing builder-<runtime>/Dockerfile (default "builders")
 
 	mu       sync.Mutex
@@ -125,6 +128,11 @@ func Validate(name string, c Config) error {
 	}
 	if c.Route != "" && !strings.HasPrefix(c.Route, "/") {
 		return fmt.Errorf("route %q must start with /", c.Route)
+	}
+	switch strings.ToLower(strings.TrimSpace(c.AuthMode)) {
+	case "", "public", "key", "private":
+	default:
+		return fmt.Errorf("auth_mode %q must be public|key|private", c.AuthMode)
 	}
 	return nil
 }
@@ -201,10 +209,31 @@ func (s *Service) deployLocked(ctx context.Context, req Request, cfg Config) (*R
 		HandlerKey: artifacts.BundleKey(req.Name, ver, "handler"),
 		ConfigJSON: "{}",
 		Status:     "active",
+		OwnerID:    req.OwnerID,
 	}); err != nil {
 		return nil, err
 	}
-	if err := s.Store.UpsertFunction(req.Name, ver, req.ConfigTOML); err != nil {
+	mode := auth.NormalizeMode(cfg.AuthMode)
+	slug := ""
+	if existing, err := s.Store.GetFunction(req.Name); err == nil {
+		slug = existing.Slug
+	}
+	if slug == "" {
+		for i := 0; i < 5; i++ {
+			cand, err := auth.NewSlug()
+			if err != nil {
+				return nil, err
+			}
+			if !s.Store.SlugExists(cand) {
+				slug = cand
+				break
+			}
+		}
+		if slug == "" {
+			return nil, fmt.Errorf("slug allocation failed")
+		}
+	}
+	if err := s.Store.UpsertFunctionOwned(req.OwnerID, req.Name, ver, req.ConfigTOML, slug, mode); err != nil {
 		return nil, err
 	}
 	return &Result{Name: req.Name, Version: ver, Status: "active", Image: image, SHA256: sha}, nil
@@ -319,7 +348,8 @@ func (s *Service) dockerBuild(ctx context.Context, srcDir, runtime, outImage str
 	return nil
 }
 
-func dockerExtractHandler(ctx context.Context, outImage string) ([]byte, error) {	cidOut, err := exec.CommandContext(ctx, "docker", "create", outImage).CombinedOutput()
+func dockerExtractHandler(ctx context.Context, outImage string) ([]byte, error) {
+	cidOut, err := exec.CommandContext(ctx, "docker", "create", outImage).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("docker create: %v: %s", err, strings.TrimSpace(string(cidOut)))
 	}

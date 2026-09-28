@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"actions/internal/artifacts"
+	"actions/internal/auth"
 	"actions/internal/bus"
+	"actions/internal/controlauth"
 	"actions/internal/deploy"
 	"actions/internal/functions"
 	"actions/internal/gateway"
@@ -91,9 +93,6 @@ func main() {
 	sc := &sidecar.Server{KV: kv, Blobs: sidecar.NewBlobFromEnv(arts, sidecarURL), Bus: qbus, Logs: logs, Tokens: tokens}
 
 	helloImage := getenv("HELLO_IMAGE", "hello-ts:latest")
-	lookup := func(name string) (runner.FunctionRef, bool) {
-		return functions.Resolve(st, name, helloImage, sidecarURL)
-	}
 
 	sched := scheduler.New(st, backend, qbus, helloImage, sidecarURL)
 	sched.Start()
@@ -104,10 +103,16 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	mux.Handle("/f/", gateway.NewHandler(backend, lookup))
+	controlauth.RegisterAuthRoutes(mux, st)
+	controlauth.RegisterKeyRoutes(mux, st)
+	gwHooks := controlauth.GatewayHooks(st, sidecarURL)
+	gw := gateway.NewHandlerWithAuth(backend, gwHooks)
+	mux.Handle("/f/", gw)
+	mux.Handle("/s/", gw)
 	// Operator queue ingress: POST /pub/:topic with raw body -> bus ->
 	// subscriber functions. (Handlers publish via sidecar with tokens.)
-	mux.HandleFunc("POST /pub/", func(w http.ResponseWriter, r *http.Request) {
+	// Requires operator login once users exist.
+	mux.HandleFunc("POST /pub/", controlauth.RequireOperator(st, func(w http.ResponseWriter, r *http.Request) {
 		topic := strings.TrimPrefix(r.URL.Path, "/pub/")
 		if topic == "" || strings.Contains(topic, "/") {
 			http.Error(w, "topic required", http.StatusBadRequest)
@@ -123,10 +128,10 @@ func main() {
 			return
 		}
 		w.WriteHeader(http.StatusAccepted)
-	})
+	}))
 	sc.RegisterRoutes(mux)
 	sidecar.RegisterTransferRoutes(mux, arts, tokens)
-	mux.HandleFunc("POST /deploy", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /deploy", controlauth.RequireOperator(st, func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Name       string `json:"name"`
 			ConfigTOML string `json:"config_toml"`
@@ -136,12 +141,26 @@ func main() {
 			http.Error(w, "bad JSON (max 32MB)", http.StatusBadRequest)
 			return
 		}
+		if err := auth.ValidateFunctionName(in.Name); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		me, ok := controlauth.CurrentUser(st, r)
+		ownerID := ""
+		if ok {
+			ownerID = me.ID
+			// Ownership: refuse to overwrite another user's function.
+			if existing, err := st.GetFunction(in.Name); err == nil && existing.OwnerID != "" && existing.OwnerID != ownerID {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+		}
 		zipBytes, err := base64.StdEncoding.DecodeString(in.SrcZipB64)
 		if err != nil || len(zipBytes) == 0 {
 			http.Error(w, "src_zip_b64 must be non-empty base64", http.StatusBadRequest)
 			return
 		}
-		res, err := svc.Deploy(r.Context(), deploy.Request{Name: in.Name, ConfigTOML: in.ConfigTOML, SrcZip: zipBytes})
+		res, err := svc.Deploy(r.Context(), deploy.Request{Name: in.Name, ConfigTOML: in.ConfigTOML, SrcZip: zipBytes, OwnerID: ownerID})
 		if err != nil {
 			slog.Warn("deploy failed", "fn", in.Name, "err", err)
 			http.Error(w, "deploy: "+err.Error(), http.StatusBadRequest)
@@ -150,9 +169,15 @@ func main() {
 		sched.Sync() // pick up new cron/queue triggers immediately
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(res)
-	})
-	mux.HandleFunc("GET /functions", func(w http.ResponseWriter, r *http.Request) {
-		fns, err := st.ListFunctions()
+	}))
+	mux.HandleFunc("GET /functions", controlauth.RequireOperator(st, func(w http.ResponseWriter, r *http.Request) {
+		var fns []store.Function
+		var err error
+		if me, ok := controlauth.CurrentUser(st, r); ok {
+			fns, err = st.ListFunctionsByOwner(me.ID)
+		} else {
+			fns, err = st.ListFunctions() // fresh bootstrap: zero users
+		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -181,16 +206,22 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(out)
-	})
-	mux.HandleFunc("GET /logs", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("GET /logs", controlauth.RequireOperator(st, func(w http.ResponseWriter, r *http.Request) {
 		fn := r.URL.Query().Get("fn")
 		if fn == "" {
 			http.Error(w, "?fn= required", http.StatusBadRequest)
 			return
 		}
+		if me, ok := controlauth.CurrentUser(st, r); ok {
+			if existing, err := st.GetFunction(fn); err == nil && existing.OwnerID != "" && existing.OwnerID != me.ID {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(logs.Tail(fn, 100))
-	})
+	}))
 
 	srv := &http.Server{
 		Addr:              ":" + port,

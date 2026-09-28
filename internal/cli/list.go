@@ -104,10 +104,10 @@ func FormatFunctions(fns []Function, now time.Time) string {
 		}
 		rows = append(rows, []string{
 			f.Name, f.ActiveVersion, cfg.Runtime, route, status, uptime, last,
-			shortTime(f.DeployedAt), fmt.Sprintf("%d", mem), shortDur(timeout), egress, triggers(cfg),
+			shortTime(f.DeployedAt), fmt.Sprintf("%d", mem), shortDur(timeout), egress, triggers(cfg), authOf(f),
 		})
 	}
-	head := []string{"NAME", "VER", "RUNTIME", "ROUTE", "STATUS", "UPTIME", "LAST USED", "DEPLOYED", "MEM", "TIMEOUT", "EGRESS", "TRIGGERS"}
+	head := []string{"NAME", "VER", "RUNTIME", "ROUTE", "STATUS", "UPTIME", "LAST USED", "DEPLOYED", "MEM", "TIMEOUT", "EGRESS", "TRIGGERS", "AUTH"}
 	widths := make([]int, len(head))
 	for i, h := range head {
 		widths[i] = len(h)
@@ -131,4 +131,12 @@ func FormatFunctions(fns []Function, now time.Time) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// authOf renders the invoke auth mode for `actions ls`.
+func authOf(f Function) string {
+	if f.AuthMode == "" {
+		return "public"
+	}
+	return f.AuthMode
 }

@@ -68,16 +68,31 @@ type DeployResult struct {
 }
 
 func Deploy(baseURL, name, configTOML string, srcZip []byte) (*DeployResult, error) {
+	return DeployWithAuth(baseURL, "", name, configTOML, srcZip)
+}
+
+func DeployWithAuth(baseURL, token, name, configTOML string, srcZip []byte) (*DeployResult, error) {
 	body, _ := json.Marshal(map[string]string{
 		"name": name, "config_toml": configTOML,
 		"src_zip_b64": base64.StdEncoding.EncodeToString(srcZip),
 	})
-	resp, err := httpClient.Post(strings.TrimSuffix(baseURL, "/")+"/deploy", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest("POST", strings.TrimSuffix(baseURL, "/")+"/deploy", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == 401 {
+		return nil, fmt.Errorf("deploy: unauthorized (run `actions login`)")
+	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("deploy: %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
@@ -95,6 +110,10 @@ type InvokeResult struct {
 }
 
 func Invoke(baseURL, fnPath, method string, body []byte) (*InvokeResult, error) {
+	return InvokeWithAuth(baseURL, "", "", fnPath, method, body)
+}
+
+func InvokeWithAuth(baseURL, token, apiKey, fnPath, method string, body []byte) (*InvokeResult, error) {
 	if !strings.HasPrefix(fnPath, "/") {
 		fnPath = "/" + fnPath
 	}
@@ -105,6 +124,12 @@ func Invoke(baseURL, fnPath, method string, body []byte) (*InvokeResult, error) 
 	req, err := http.NewRequest(method, strings.TrimSuffix(baseURL, "/")+"/f/"+strings.TrimPrefix(fnPath, "/"), rdr)
 	if err != nil {
 		return nil, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if apiKey != "" {
+		req.Header.Set("x-api-key", apiKey)
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -121,6 +146,9 @@ type Function struct {
 	ConfigTOML    string         `json:"ConfigTOML"`
 	DeployedAt    string         `json:"DeployedAt"`
 	Warm          []WarmInstance `json:"Warm"`
+	OwnerID       string         `json:"OwnerID"`
+	Slug          string         `json:"Slug"`
+	AuthMode      string         `json:"AuthMode"`
 }
 
 // WarmInstance mirrors runner.InstanceStatus on the wire.
@@ -134,11 +162,25 @@ type WarmInstance struct {
 }
 
 func ListFunctions(baseURL string) ([]Function, error) {
-	resp, err := httpClient.Get(strings.TrimSuffix(baseURL, "/") + "/functions")
+	return ListFunctionsWithAuth(baseURL, "")
+}
+
+func ListFunctionsWithAuth(baseURL, token string) ([]Function, error) {
+	req, err := http.NewRequest("GET", strings.TrimSuffix(baseURL, "/")+"/functions", nil)
+	if err != nil {
+		return nil, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == 401 {
+		return nil, fmt.Errorf("unauthorized (run `actions login`)")
+	}
 	var out []Function
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
@@ -155,13 +197,27 @@ type LogLine struct {
 }
 
 func GetLogs(baseURL, fn string) ([]LogLine, error) {
-	resp, err := httpClient.Get(strings.TrimSuffix(baseURL, "/") + "/logs?fn=" + fn)
+	return GetLogsWithAuth(baseURL, "", fn)
+}
+
+func GetLogsWithAuth(baseURL, token, fn string) ([]LogLine, error) {
+	req, err := http.NewRequest("GET", strings.TrimSuffix(baseURL, "/")+"/logs?fn="+fn, nil)
+	if err != nil {
+		return nil, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == 401 {
+		return nil, fmt.Errorf("unauthorized (run `actions login`)")
+	}
 	if resp.StatusCode != 200 {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 16 * 1024))
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
 		return nil, fmt.Errorf("logs: %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	var out []LogLine
@@ -169,4 +225,178 @@ func GetLogs(baseURL, fn string) ([]LogLine, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// --- device login + operator + api keys ---
+
+type DeviceStart struct {
+	DeviceCode string `json:"device_code"`
+	UserCode   string `json:"user_code"`
+	VerifyPath string `json:"verify_path"`
+	ExpiresIn  int    `json:"expires_in"`
+}
+
+func DeviceStartReq(baseURL, deviceName string) (*DeviceStart, error) {
+	body, _ := json.Marshal(map[string]string{"device_name": deviceName})
+	resp, err := httpClient.Post(strings.TrimSuffix(baseURL, "/")+"/auth/device/start", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("login start: %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	var out DeviceStart
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+type DevicePoll struct {
+	Status   string `json:"status"`
+	Token    string `json:"token"`
+	Username string `json:"username"`
+}
+
+func DevicePollReq(baseURL, deviceCode string) (*DevicePoll, error) {
+	body, _ := json.Marshal(map[string]string{"device_code": deviceCode})
+	resp, err := httpClient.Post(strings.TrimSuffix(baseURL, "/")+"/auth/device/poll", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var out DevicePoll
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+type Whoami struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	CreatedAt string `json:"created_at"`
+	Setup     bool   `json:"setup"`
+}
+
+func Me(baseURL, token string) (*Whoami, error) {
+	req, _ := http.NewRequest("GET", strings.TrimSuffix(baseURL, "/")+"/auth/me", nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 401 {
+		return nil, fmt.Errorf("unauthorized (run `actions login`)")
+	}
+	var out Whoami
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func LogoutRemote(baseURL, token string) {
+	if token == "" {
+		return
+	}
+	req, _ := http.NewRequest("POST", strings.TrimSuffix(baseURL, "/")+"/auth/logout", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return
+	}
+	resp.Body.Close()
+}
+
+type APIKeyCreated struct {
+	ID        string `json:"id"`
+	Fn        string `json:"fn"`
+	Name      string `json:"name"`
+	Prefix    string `json:"prefix"`
+	Key       string `json:"key"`
+	CreatedAt string `json:"created_at"`
+}
+
+func CreateAPIKey(baseURL, token, fn, name string) (*APIKeyCreated, error) {
+	body, _ := json.Marshal(map[string]string{"fn": fn, "name": name})
+	req, _ := http.NewRequest("POST", strings.TrimSuffix(baseURL, "/")+"/keys", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
+	if resp.StatusCode == 401 {
+		return nil, fmt.Errorf("unauthorized (run `actions login`)")
+	}
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("keys create: %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	var out APIKeyCreated
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+type APIKeyInfo struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Prefix     string `json:"prefix"`
+	CreatedAt  string `json:"created_at"`
+	RevokedAt  string `json:"revoked_at"`
+	LastUsedAt string `json:"last_used_at"`
+}
+
+func ListAPIKeys(baseURL, token, fn string) ([]APIKeyInfo, error) {
+	req, _ := http.NewRequest("GET", strings.TrimSuffix(baseURL, "/")+"/keys?fn="+fn, nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 401 {
+		return nil, fmt.Errorf("unauthorized (run `actions login`)")
+	}
+	var out []APIKeyInfo
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []APIKeyInfo{}
+	}
+	return out, nil
+}
+
+func RevokeAPIKey(baseURL, token, id string) error {
+	req, _ := http.NewRequest("POST", strings.TrimSuffix(baseURL, "/")+"/keys/"+id+"/revoke", nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 401 {
+		return fmt.Errorf("unauthorized (run `actions login`)")
+	}
+	if resp.StatusCode != 200 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
+		return fmt.Errorf("keys revoke: %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return nil
 }

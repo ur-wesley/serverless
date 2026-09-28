@@ -8,14 +8,37 @@ Any language that compiles to a Linux binary runs if it speaks the ABI:
 ```sh
 # 1. Scaffold
 go run ./cmd/actions init --runtime go --name hello --dir ./hello
-# 2. Run control plane (needs Docker; NATS optional — falls back to memory bus)
+# 2. Log in (first login creates your account via browser verification)
+go run ./cmd/actions login
+# 3. Run control plane (needs Docker; NATS optional — falls back to memory bus)
 go run ./cmd/controlplane
-# 3. Deploy / call / list (flags before positional args)
+# 4. Deploy / call / list (URL + token come from the saved login)
 go run ./cmd/actions deploy --dir ./hello
 go run ./cmd/actions invoke -d ping hello/hi
 go run ./cmd/actions ls
 go run ./cmd/actions logs hello
 ```
+
+Auth: `login` asks for the control plane URL, prints a verification link
+(`open it in a browser; the first visit creates the first account, later
+visits bind the CLI to your own account — no second-person approval`),
+then saves URL + token to `~/.config/actions/auth.json` (`0600`).
+`logout` / `whoami` / `config get|set url` manage it. Operator routes
+(`deploy`, `ls`, `logs`, `/pub/*`, `/keys`) require the token; invoke is
+open by default.
+
+Per-function protection (`actions.toml: auth_mode = "public"|"key"|"private"`):
+
+```sh
+go run ./cmd/actions keys create hello --name ci   # prints ak_... once
+go run ./cmd/actions keys ls hello
+go run ./cmd/actions keys revoke <id>
+go run ./cmd/actions invoke --api-key ak_... hello/hi
+```
+
+Each app can have multiple keys; only `sha256` hashes are stored.
+Functions are user-scoped: `/f/<you>/<app>/...` namespace routing plus a
+random public slug per function (`/s/<slug>/...`) for sharing.
 
 Offline handler dev (in-memory KV/Blob/Queue mock, no control plane):
 
