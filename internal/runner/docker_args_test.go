@@ -71,3 +71,19 @@ func TestSanitize(t *testing.T) {
 		t.Fatalf("got %q", sanitize("Echo_1!"))
 	}
 }
+
+func TestSplitKeyRoundTrip(t *testing.T) {
+	ref := testRef()
+	name, ver, image := splitKey(keyFor(ref))
+	if name != ref.Name || ver != ref.Version || image != ref.Image {
+		t.Fatalf("got %q %q %q", name, ver, image)
+	}
+}
+
+func TestStatusEmpty(t *testing.T) {
+	r := NewDockerRunner(Config{})
+	defer r.Close()
+	if got := r.Status(); len(got) != 0 {
+		t.Fatalf("status = %+v, want empty", got)
+	}
+}

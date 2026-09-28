@@ -160,8 +160,27 @@ func main() {
 		if fns == nil {
 			fns = []store.Function{}
 		}
+		warm := backend.Status()
+		type entry struct {
+			store.Function
+			DeployedAt string                  `json:"DeployedAt"`
+			Warm       []runner.InstanceStatus `json:"Warm"`
+		}
+		out := make([]entry, 0, len(fns))
+		for _, f := range fns {
+			e := entry{Function: f, DeployedAt: st.ActiveVersionCreatedAt(f.Name, f.ActiveVersion)}
+			for _, inst := range warm {
+				if inst.Name == f.Name {
+					e.Warm = append(e.Warm, inst)
+				}
+			}
+			if e.Warm == nil {
+				e.Warm = []runner.InstanceStatus{}
+			}
+			out = append(out, e)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(fns)
+		_ = json.NewEncoder(w).Encode(out)
 	})
 	mux.HandleFunc("GET /logs", func(w http.ResponseWriter, r *http.Request) {
 		fn := r.URL.Query().Get("fn")

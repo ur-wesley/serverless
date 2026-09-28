@@ -116,8 +116,21 @@ func Invoke(baseURL, fnPath, method string, body []byte) (*InvokeResult, error) 
 }
 
 type Function struct {
-	Name          string `json:"Name"`
-	ActiveVersion string `json:"ActiveVersion"`
+	Name          string         `json:"Name"`
+	ActiveVersion string         `json:"ActiveVersion"`
+	ConfigTOML    string         `json:"ConfigTOML"`
+	DeployedAt    string         `json:"DeployedAt"`
+	Warm          []WarmInstance `json:"Warm"`
+}
+
+// WarmInstance mirrors runner.InstanceStatus on the wire.
+type WarmInstance struct {
+	Name      string    `json:"name"`
+	Version   string    `json:"version"`
+	Image     string    `json:"image"`
+	Container string    `json:"container"`
+	StartedAt time.Time `json:"startedAt"`
+	LastUsed  time.Time `json:"lastUsed"`
 }
 
 func ListFunctions(baseURL string) ([]Function, error) {

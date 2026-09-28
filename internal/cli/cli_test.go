@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"actions/internal/deploy"
 )
@@ -49,6 +51,36 @@ func TestInitTS(t *testing.T) {
 func TestInitBadRuntime(t *testing.T) {
 	if err := Init("py", "x", t.TempDir()); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestFormatFunctions(t *testing.T) {
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	fns := []Function{
+		{
+			Name: "hello-go", ActiveVersion: "v1",
+			ConfigTOML: "name=\"hello-go\"\nruntime=\"go\"\nroute=\"/f/hello-go\"\ntimeout_ms=10000\nmemory_mb=256\nallow_egress=false\nqueue=[\"orders.created\"]\n",
+			DeployedAt: "2026-09-28T11:50:00Z",
+			Warm: []WarmInstance{{
+				Name: "hello-go", Version: "v1", Container: "abc123",
+				StartedAt: now.Add(-3*time.Minute - 12*time.Second),
+				LastUsed:  now.Add(-5 * time.Second),
+			}},
+		},
+		{Name: "echo", ActiveVersion: "v2", ConfigTOML: "name=\"echo\"\nruntime=\"go\"\n"},
+		{Name: "broken", ActiveVersion: "v1", ConfigTOML: "not toml [[["},
+	}
+	out := FormatFunctions(fns, now)
+	for _, want := range []string{
+		"NAME", "STATUS", "UPTIME", "LAST USED", "DEPLOYED", "TRIGGERS",
+		"hello-go", "v1", "go", "/f/hello-go", "warm", "3m12s", "5s ago",
+		"09-28 11:50", "256", "10s", "no", "q:orders.created",
+		"echo", "cold", "-", "/f/echo",
+		"broken", "/f/broken",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
 	}
 }
 

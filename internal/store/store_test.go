@@ -62,3 +62,29 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatalf("list = %+v, err = %v", fns, err)
 	}
 }
+
+func TestActiveVersionCreatedAt(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if got := s.ActiveVersionCreatedAt("nope", "v1"); got != "" {
+		t.Fatalf("unknown = %q, want empty", got)
+	}
+	if err := s.InsertVersion(Version{
+		Name: "hello", Ver: "v1", SHA256: "abc",
+		HandlerKey: "bundles/hello/v1/handler", ConfigJSON: "{}", Status: "active",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := s.ActiveVersionCreatedAt("hello", "v1")
+	if got == "" {
+		t.Fatal("expected non-empty created_at")
+	}
+	if len(got) < 10 || got[:4] < "2020" {
+		t.Fatalf("created_at = %q, want UTC timestamp", got)
+	}
+}

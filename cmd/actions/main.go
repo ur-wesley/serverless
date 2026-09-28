@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"actions/internal/cli"
@@ -212,14 +211,6 @@ func cmdLs(baseURL string) error {
 		fmt.Println("(no functions)")
 		return nil
 	}
-	w := 8
-	for _, f := range fns {
-		if len(f.Name) > w {
-			w = len(f.Name)
-		}
-	}
-	for _, f := range fns {
-		fmt.Printf("%-*s %s\n", w, strings.TrimSpace(f.Name), f.ActiveVersion)
-	}
+	fmt.Print(cli.FormatFunctions(fns, time.Now()))
 	return nil
 }

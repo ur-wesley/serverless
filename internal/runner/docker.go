@@ -40,10 +40,49 @@ const containerPort = "8080"
 type instance struct {
 	containerID string
 	fn          string
+	version     string
 	name        string
 	base        string // http://host:port or http://cname:8080
 	token       string
+	startedAt   time.Time
 	lastUsed    time.Time
+}
+
+// InstanceStatus is a point-in-time snapshot of one warm handler container,
+// served to operators via GET /functions (see cmd/controlplane).
+type InstanceStatus struct {
+	Name       string    `json:"name"`
+	Version    string    `json:"version"`
+	Image      string    `json:"image"`
+	Container  string    `json:"container"` // short id
+	StartedAt  time.Time `json:"startedAt"`
+	LastUsed   time.Time `json:"lastUsed"`
+}
+
+// Status returns all warm instances. Safe for concurrent use.
+func (r *DockerRunner) Status() []InstanceStatus {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]InstanceStatus, 0, len(r.instances))
+	for k, inst := range r.instances {
+		name, ver, image := splitKey(k)
+		out = append(out, InstanceStatus{
+			Name:      name,
+			Version:   ver,
+			Image:     image,
+			Container: shortID(inst.containerID),
+			StartedAt: inst.startedAt,
+			LastUsed:  inst.lastUsed,
+		})
+	}
+	return out
+}
+
+// splitKey inverses keyFor (Name@Version|Image).
+func splitKey(k string) (name, ver, image string) {
+	name, rest, _ := strings.Cut(k, "@")
+	ver, image, _ = strings.Cut(rest, "|")
+	return name, ver, image
 }
 
 type DockerRunner struct {
@@ -305,7 +344,7 @@ func (r *DockerRunner) coldStart(ctx context.Context, ref FunctionRef) (*instanc
 	if isolated {
 		base = "http://" + name + ":" + containerPort
 	}
-	inst := &instance{containerID: id, fn: ref.Name, name: name, base: base, token: token, lastUsed: time.Now()}
+	inst := &instance{containerID: id, fn: ref.Name, version: ref.Version, name: name, base: base, token: token, startedAt: time.Now(), lastUsed: time.Now()}
 	if err := r.waitHealthy(ctx, inst); err != nil {
 		r.removeInstance(ref, inst)
 		return nil, fmt.Errorf("cold start %s: %w", ref.Image, err)

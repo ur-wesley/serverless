@@ -112,6 +112,18 @@ func (s *Store) GetVersion(name, ver string) (Version, error) {
 	return v, nil
 }
 
+// ActiveVersionCreatedAt returns versions.created_at (UTC, RFC3339-ish) for a
+// deployed version, or "" when unknown. Used for `actions ls` "deployed" column.
+func (s *Store) ActiveVersionCreatedAt(name, ver string) string {
+	var created string
+	if err := s.db.QueryRow(
+		`SELECT created_at FROM versions WHERE name = ? AND ver = ?`, name, ver,
+	).Scan(&created); err != nil {
+		return ""
+	}
+	return created
+}
+
 // NextVersion returns v<N> where N = existing count + 1.
 func (s *Store) NextVersion(name string) (string, error) {
 	var n int
