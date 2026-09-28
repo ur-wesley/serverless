@@ -7,3 +7,9 @@
 *.exe
 /data/
 node_modules/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*

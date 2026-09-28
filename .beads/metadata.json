@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "serverless",
+  "project_id": "5532c7f9-29c1-4541-8edd-40e8bab43cc8"
+}
