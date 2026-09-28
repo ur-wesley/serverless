@@ -1,6 +1,6 @@
 {
   "name": "actions",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Single-node serverless binary platform — version in this file is the source of truth for version display."
 }
