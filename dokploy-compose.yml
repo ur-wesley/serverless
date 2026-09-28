@@ -30,19 +30,6 @@ services:
       - actions-net
       - actions-sandbox
       - dokploy-network
-    labels:
-      - traefik.http.routers.serverless-fjrjkp-72-web.rule=Host(`svr.w4y.io`)
-      - traefik.http.routers.serverless-fjrjkp-72-web.entrypoints=web
-      - traefik.http.services.serverless-fjrjkp-72-web.loadbalancer.server.port=8080
-      - traefik.http.routers.serverless-fjrjkp-72-web.service=serverless-fjrjkp-72-web
-      - traefik.http.routers.serverless-fjrjkp-72-web.middlewares=redirect-to-https@file
-      - traefik.http.routers.serverless-fjrjkp-72-websecure.rule=Host(`svr.w4y.io`)
-      - traefik.http.routers.serverless-fjrjkp-72-websecure.entrypoints=websecure
-      - traefik.http.services.serverless-fjrjkp-72-websecure.loadbalancer.server.port=8080
-      - traefik.http.routers.serverless-fjrjkp-72-websecure.service=serverless-fjrjkp-72-websecure
-      - traefik.http.routers.serverless-fjrjkp-72-websecure.tls.certresolver=letsencrypt
-      - traefik.docker.network=dokploy-network
-      - traefik.enable=true
 
   nats:
     image: nats:2.11

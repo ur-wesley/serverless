@@ -8,9 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -185,125 +183,8 @@ func main() {
 	}
 	slog.Info("controlplane listening", "port", port, "sqlite", sqlitePath, "sidecar", sidecarURL,
 		"sandbox", os.Getenv("RUNNER_SANDBOX_NET") != "")
-	logSelfInspect()
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("server exited", "err", err)
 		os.Exit(1)
-	}
-}
-
-// logSelfInspect shells out to `docker inspect` on our own container (docker.sock
-// is mounted) and logs labels + networks. Temporary diagnostic for Traefik routing.
-func logSelfInspect() {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	hn, _ := os.Hostname()
-	out, err := exec.CommandContext(ctx, "docker", "inspect", hn, "--format",
-		"{{range $k,$v := .NetworkSettings.Networks}}[{{$k}}]{{end}} || {{range $k,$v := .Config.Labels}}{{$k}}={{$v}} ||| {{end}}").CombinedOutput()
-	if err != nil {
-		slog.Warn("self-inspect failed", "err", err, "out", strings.TrimSpace(string(out)))
-	} else {
-		emitChunked("self-inspect-chunk", hn, strings.TrimSpace(string(out)))
-	}
-	// Find traefik container(s) and dump recent relevant log lines.
-	ps, err := exec.CommandContext(ctx, "docker", "ps", "--format", "{{.Names}}|{{.Image}}").CombinedOutput()
-	if err != nil {
-		slog.Warn("docker ps failed", "err", err)
-		return
-	}
-	emitChunked("docker-ps", hn, strings.TrimSpace(string(ps)))
-	if out, err := exec.CommandContext(ctx, "docker", "version", "--format",
-		"client={{.Client.Version}}/{{.Client.ApiVersion}} server={{.Server.Version}}/{{.Server.ApiVersion}} min={{.Server.MinAPIVersion}}").CombinedOutput(); err != nil {
-		slog.Warn("docker version failed", "err", err)
-	} else {
-		slog.Info("docker-version", "detail", strings.TrimSpace(string(out)))
-	}
-	for _, line := range strings.Split(strings.TrimSpace(string(ps)), "\n") {
-		name := strings.SplitN(line, "|", 2)[0]
-		if !strings.Contains(strings.ToLower(line), "traefik") {
-			continue
-		}
-		if strings.Contains(name, "cert-sync") || !strings.Contains(name, "dokploy-traefik") {
-			continue
-		}
-		env, err := exec.CommandContext(ctx, "docker", "inspect", name, "--format", "{{json .Config.Env}}").CombinedOutput()
-		if err != nil {
-			slog.Warn("traefik inspect failed", "container", name, "err", err)
-		} else {
-			emitChunked("traefik-env-"+name, hn, strings.TrimSpace(string(env)))
-		}
-		lg, err := exec.CommandContext(ctx, "docker", "logs", "--tail", "2000", name).CombinedOutput()
-		if err != nil {
-			slog.Warn("traefik logs failed", "container", name, "err", err)
-			continue
-		}
-		var firstErr, lastErr string
-		n := 0
-		for _, l := range strings.Split(string(lg), "\n") {
-			if strings.Contains(l, "ERR") || strings.Contains(strings.ToLower(l), "level=error") {
-				n++
-				clean := stripANSI(l)
-				if len(clean) > 300 {
-					clean = clean[:300]
-				}
-				if firstErr == "" {
-					firstErr = clean
-				}
-				lastErr = clean
-			}
-		}
-		slog.Info("traefik-err-summary", "container", name, "errLines", n, "first", firstErr, "last", lastErr)
-		// Try traefik API for router table (usually disabled; informative either way).
-		if api, err := exec.CommandContext(ctx, "wget", "-qO-", "--timeout=5",
-			"http://"+name+":8080/api/http/routers").CombinedOutput(); err != nil {
-			slog.Info("traefik-api", "container", name, "result", "unreachable: "+strings.TrimSpace(string(api)))
-		} else {
-			s := string(api)
-			hasOurs := strings.Contains(s, "svr.w4y.io") || strings.Contains(s, "serverless")
-			emitChunked("traefik-api-routers", hn, "hasOurs="+boolStr(hasOurs)+" len="+itoa(len(s))+" "+s)
-		}
-	}
-}
-
-func stripANSI(s string) string {
-	var b strings.Builder
-	esc := false
-	for _, r := range s {
-		if r == 0x1b {
-			esc = true
-			continue
-		}
-		if esc {
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-				esc = false
-			}
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
-}
-
-func boolStr(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
-}
-
-func itoa(n int) string { return strconv.Itoa(n) }
-
-func emitChunked(msg, hn, s string) {
-	if s == "" {
-		slog.Info(msg, "hostname", hn, "detail", "(empty)")
-		return
-	}
-	for len(s) > 0 {
-		chunk := s
-		if len(chunk) > 2500 {
-			chunk = chunk[:2500]
-		}
-		slog.Info(msg, "hostname", hn, "detail", chunk)
-		s = s[len(chunk):]
 	}
 }
