@@ -151,8 +151,7 @@ jobs:
 
       - name: Publish @ur-wesley/serverless to npm
         working-directory: npm
-        # No --provenance: sigstore requires a public repo; this one is private.
-        run: npm publish --access public
+        run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -160,7 +159,6 @@ jobs:
         working-directory: sdks/ts
         run: |
           npm ci
-          # No --provenance: sigstore requires a public repo; this one is private.
-          npm publish --access public
+          npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
