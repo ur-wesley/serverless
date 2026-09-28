@@ -24,6 +24,7 @@ import (
 
 func withRecovery(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("incoming request", "method", r.Method, "path", r.URL.Path, "host", r.Host, "remote", r.RemoteAddr)
 		defer func() {
 			if v := recover(); v != nil {
 				slog.Error("panic recovered", "err", v, "path", r.URL.Path)
