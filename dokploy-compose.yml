@@ -29,6 +29,7 @@ services:
     networks:
       - actions-net
       - actions-sandbox
+      - dokploy-network
 
   nats:
     image: nats:2.11
@@ -61,6 +62,8 @@ networks:
     name: actions-sandbox
     driver: bridge
     internal: true
+  dokploy-network:
+    external: true
 
 volumes:
   controlplane-data:
