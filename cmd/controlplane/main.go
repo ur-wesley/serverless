@@ -191,14 +191,18 @@ func logSelfInspect() {
 	defer cancel()
 	hn, _ := os.Hostname()
 	out, err := exec.CommandContext(ctx, "docker", "inspect", hn, "--format",
-		"networks={{json .NetworkSettings.Networks}} labels={{json .Config.Labels}}").CombinedOutput()
+		"{{range $k,$v := .NetworkSettings.Networks}}[{{$k}}]{{end}} || {{range $k,$v := .Config.Labels}}{{$k}}={{$v}} ||| {{end}}").CombinedOutput()
 	if err != nil {
 		slog.Warn("self-inspect failed", "err", err, "out", strings.TrimSpace(string(out)))
 		return
 	}
 	s := strings.TrimSpace(string(out))
-	if len(s) > 3000 {
-		s = s[:3000] + "...[truncated]"
+	for len(s) > 0 {
+		chunk := s
+		if len(chunk) > 2500 {
+			chunk = chunk[:2500]
+		}
+		slog.Info("self-inspect-chunk", "hostname", hn, "detail", chunk)
+		s = s[len(chunk):]
 	}
-	slog.Info("self-inspect", "hostname", hn, "detail", s)
 }
