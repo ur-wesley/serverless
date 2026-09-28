@@ -1,0 +1,6 @@
+name = "ui"
+runtime = "go"
+route = "/f/ui"
+timeout_ms = 10000
+memory_mb = 256
+allow_egress = false
