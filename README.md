@@ -13,8 +13,10 @@ actions --help
 Ships `linux/x64`, `macOS Apple Silicon (arm64)`, `windows/x64` binaries from
 the `v<version>` GitHub Release. Other platforms: `go build -o actions ./cmd/actions`.
 Releases are cut by pushing a `v*` tag matching root `package.json`
-(`.github/workflows/release-cli.yml` builds, publishes the release, and
-auto-publishes the npm wrapper).
+(`.github/workflows/release-cli.yml` builds, publishes the release,
+auto-publishes the npm wrapper, and auto-publishes the SDKs in lockstep:
+`@ur-wesley/serverless-sdk` on npm and `github.com/ur-wesley/serverless/sdks/go`
+via the same tag).
 
 ## Quickstart (dev on Docker host)
 

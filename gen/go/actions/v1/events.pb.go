@@ -324,7 +324,7 @@ const file_actions_v1_events_proto_rawDesc = "" +
 	"\x04body\x18\x03 \x01(\fR\x04body\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B%Z#actions/gen/go/actions/v1;actionsv1b\x06proto3"
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B%Z#github.com/ur-wesley/serverless/gen/go/actions/v1;actionsv1b\x06proto3"
 
 var (
 	file_actions_v1_events_proto_rawDescOnce sync.Once

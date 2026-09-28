@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"actions/internal/runner"
+	"github.com/ur-wesley/serverless/internal/runner"
 )
 
 type fakeInvoker struct {

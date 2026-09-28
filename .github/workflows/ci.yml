@@ -15,3 +15,25 @@ jobs:
       - run: go build ./...
       - run: go test ./...
       - run: go vet ./...
+
+  ts-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Check SDK version lockstep
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          SDK_VERSION="$(node -p "require('./sdks/ts/package.json').version")"
+          echo "root: $PKG_VERSION sdk: $SDK_VERSION"
+          test "$SDK_VERSION" = "$PKG_VERSION"
+      - working-directory: sdks/ts
+        run: npm ci
+      - working-directory: sdks/ts
+        run: npm run check
+      - working-directory: sdks/ts
+        run: npm run build

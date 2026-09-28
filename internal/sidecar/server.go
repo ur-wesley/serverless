@@ -21,8 +21,8 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
-	"actions/internal/artifacts"
-	"actions/internal/bus"
+	"github.com/ur-wesley/serverless/internal/artifacts"
+	"github.com/ur-wesley/serverless/internal/bus"
 )
 
 // --- KV ---

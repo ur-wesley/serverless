@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package actions.v1;
 
-option go_package = "actions/gen/go/actions/v1;actionsv1";
+option go_package = "github.com/ur-wesley/serverless/gen/go/actions/v1;actionsv1";
 
 // Sidecar API available to handler binaries via $ACTIONS_SIDECAR_URL.
 // Backed by NATS KV (small KV) + SQLite meta, RustFS (blobs),

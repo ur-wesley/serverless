@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"actions/internal/cli"
-	"actions/internal/deploy"
-	"actions/internal/version"
+	"github.com/ur-wesley/serverless/internal/cli"
+	"github.com/ur-wesley/serverless/internal/deploy"
+	"github.com/ur-wesley/serverless/internal/version"
 )
 
 const usage = `actions - serverless binary platform CLI

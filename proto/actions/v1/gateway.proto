@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package actions.v1;
 
-option go_package = "actions/gen/go/actions/v1;actionsv1";
+option go_package = "github.com/ur-wesley/serverless/gen/go/actions/v1;actionsv1";
 
 // Control-plane deploy API. Codegen source; runtime uses protojson
 // over HTTP so hand-rolled JSON without proto libs stays valid.

@@ -1,4 +1,4 @@
-module actions
+module github.com/ur-wesley/serverless
 
 go 1.27
 

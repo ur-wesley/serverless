@@ -32,7 +32,7 @@ import (
 	"sync"
 	"time"
 
-	"actions/internal/artifacts"
+	"github.com/ur-wesley/serverless/internal/artifacts"
 )
 
 const containerPort = "8080"

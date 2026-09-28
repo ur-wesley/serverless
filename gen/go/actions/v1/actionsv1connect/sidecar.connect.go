@@ -5,7 +5,7 @@
 package actionsv1connect
 
 import (
-	v1 "actions/gen/go/actions/v1"
+	v1 "github.com/ur-wesley/serverless/gen/go/actions/v1"
 	connect "connectrpc.com/connect"
 	context "context"
 	errors "errors"

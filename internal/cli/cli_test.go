@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"actions/internal/deploy"
+	"github.com/ur-wesley/serverless/internal/deploy"
 )
 
 func TestInitGo(t *testing.T) {

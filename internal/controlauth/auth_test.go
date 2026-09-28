@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"actions/internal/auth"
-	"actions/internal/store"
+	"github.com/ur-wesley/serverless/internal/auth"
+	"github.com/ur-wesley/serverless/internal/store"
 )
 
 func openTest(t *testing.T) *store.Store {

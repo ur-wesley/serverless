@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package actions.v1;
 
-option go_package = "actions/gen/go/actions/v1;actionsv1";
+option go_package = "github.com/ur-wesley/serverless/gen/go/actions/v1;actionsv1";
 
 // Raw HTTP event delivered to the handler binary.
 message HttpEvent {

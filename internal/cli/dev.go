@@ -9,8 +9,8 @@ import (
 	"os/signal"
 	"path/filepath"
 
-	"actions/internal/deploy"
-	"actions/internal/devmock"
+	"github.com/ur-wesley/serverless/internal/deploy"
+	"github.com/ur-wesley/serverless/internal/devmock"
 )
 
 // defaultHandlerCmd guesses how to run the function locally.

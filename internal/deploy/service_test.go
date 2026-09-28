@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"actions/internal/artifacts"
-	"actions/internal/store"
+	"github.com/ur-wesley/serverless/internal/artifacts"
+	"github.com/ur-wesley/serverless/internal/store"
 )
 
 func makeZip(t *testing.T, files map[string]string) []byte {

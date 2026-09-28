@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"actions/internal/bus"
-	"actions/internal/runner"
-	"actions/internal/store"
+	"github.com/ur-wesley/serverless/internal/bus"
+	"github.com/ur-wesley/serverless/internal/runner"
+	"github.com/ur-wesley/serverless/internal/store"
 )
 
 type fakeBackend struct {

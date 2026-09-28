@@ -354,7 +354,7 @@ const file_actions_v1_gateway_proto_rawDesc = "" +
 	"\x0eGatewayService\x12?\n" +
 	"\x06Deploy\x12\x19.actions.v1.DeployRequest\x1a\x1a.actions.v1.DeployResponse\x12N\n" +
 	"\vGetFunction\x12\x1e.actions.v1.GetFunctionRequest\x1a\x1f.actions.v1.GetFunctionResponse\x12T\n" +
-	"\rListFunctions\x12 .actions.v1.ListFunctionsRequest\x1a!.actions.v1.ListFunctionsResponseB%Z#actions/gen/go/actions/v1;actionsv1b\x06proto3"
+	"\rListFunctions\x12 .actions.v1.ListFunctionsRequest\x1a!.actions.v1.ListFunctionsResponseB%Z#github.com/ur-wesley/serverless/gen/go/actions/v1;actionsv1b\x06proto3"
 
 var (
 	file_actions_v1_gateway_proto_rawDescOnce sync.Once

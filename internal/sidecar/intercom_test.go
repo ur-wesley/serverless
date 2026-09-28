@@ -10,7 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"actions/internal/bus"
+	"github.com/ur-wesley/serverless/internal/bus"
 )
 
 func intercomServer() (*Server, *Registry) {

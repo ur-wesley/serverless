@@ -1,10 +1,39 @@
 {
-  "name": "@actions/sdk",
+  "name": "@ur-wesley/serverless-sdk",
   "version": "0.1.0",
-  "private": true,
+  "description": "TypeScript SDK for the serverless binary platform — handler ABI (GET /healthz, POST /invoke) plus sidecar Env client (KV, blobs, queue, logs, intercom).",
+  "license": "MIT",
   "type": "module",
+  "exports": {
+    "./handler": {
+      "types": "./dist/handler.d.ts",
+      "default": "./dist/handler.js"
+    },
+    "./sidecar": {
+      "types": "./dist/sidecar.d.ts",
+      "default": "./dist/sidecar.js"
+    }
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ],
   "scripts": {
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ur-wesley/serverless.git",
+    "directory": "sdks/ts"
+  },
+  "homepage": "https://github.com/ur-wesley/serverless#readme",
+  "publishConfig": {
+    "access": "public"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",

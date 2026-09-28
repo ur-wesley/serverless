@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"actions/internal/deploy"
-	"actions/internal/runner"
+	"github.com/ur-wesley/serverless/internal/deploy"
+	"github.com/ur-wesley/serverless/internal/runner"
 )
 
 // shortDur renders d compactly: 5s, 3m12s, 2h5m, 4d3h. Negative/zero -> "0s".
