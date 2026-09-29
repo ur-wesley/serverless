@@ -406,7 +406,7 @@ func (s *Store) GetVersion(name, ver string) (Version, error) {
 }
 
 // ActiveVersionCreatedAt returns versions.created_at (UTC, RFC3339-ish) for a
-// deployed version, or "" when unknown. Used for `actions ls` "deployed" column.
+// deployed version, or "" when unknown. Used for `oort ls` "deployed" column.
 func (s *Store) ActiveVersionCreatedAt(name, ver string) string {
 	var created string
 	if err := s.db.QueryRow(

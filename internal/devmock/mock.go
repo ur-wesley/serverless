@@ -1,4 +1,4 @@
-// Package devmock is the offline sidecar for `actions dev --offline`:
+// Package devmock is the offline sidecar for `oort dev --offline`:
 // same routes as the control-plane sidecar, all state in memory.
 package devmock
 

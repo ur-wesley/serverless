@@ -1,4 +1,4 @@
-// Package cli implements the `actions` subcommands (init/dev/deploy/invoke/logs/ls).
+// Package cli implements the `oort` subcommands (init/dev/deploy/invoke/logs/ls).
 package cli
 
 import (

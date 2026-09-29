@@ -58,56 +58,67 @@ func triggers(c deploy.Config) string {
 	return strings.Join(parts, ",")
 }
 
-// FormatFunctions renders `actions ls` rows as an aligned table.
+// FunctionHeader returns the column headers for `oort ls`.
+func FunctionHeader() []string {
+	return []string{"NAME", "VER", "RUNTIME", "ROUTE", "STATUS", "UPTIME", "LAST USED", "DEPLOYED", "MEM", "TIMEOUT", "EGRESS", "TRIGGERS", "AUTH"}
+}
+
+// FunctionRow renders one function as table cells (same values as FormatFunctions).
+// now is injected for tests.
+func FunctionRow(f Function, now time.Time) []string {
+	cfg, _ := deploy.ParseConfig(f.ConfigTOML) // empty on error; zeros mean defaults
+	timeout := runner.DefaultTimeout
+	if cfg.TimeoutMs != 0 {
+		timeout = time.Duration(cfg.TimeoutMs) * time.Millisecond
+	}
+	mem := runner.DefaultMemory
+	if cfg.MemoryMB != 0 {
+		mem = cfg.MemoryMB
+	}
+	route := cfg.Route
+	if route == "" {
+		route = "/f/" + f.Name
+	}
+	egress := "no"
+	if cfg.AllowEgress {
+		egress = "yes"
+	}
+	status, uptime, last := "cold", "-", "-"
+	if len(f.Warm) > 0 {
+		status = "warm"
+		if len(f.Warm) > 1 {
+			status = fmt.Sprintf("warmx%d", len(f.Warm))
+		}
+		oldest, newest := f.Warm[0].StartedAt, f.Warm[0].LastUsed
+		for _, w := range f.Warm[1:] {
+			if w.StartedAt.Before(oldest) {
+				oldest = w.StartedAt
+			}
+			if w.LastUsed.After(newest) {
+				newest = w.LastUsed
+			}
+		}
+		if !oldest.IsZero() {
+			uptime = shortDur(now.Sub(oldest))
+		}
+		if !newest.IsZero() {
+			last = shortDur(now.Sub(newest)) + " ago"
+		}
+	}
+	return []string{
+		f.Name, f.ActiveVersion, cfg.Runtime, route, status, uptime, last,
+		shortTime(f.DeployedAt), fmt.Sprintf("%d", mem), shortDur(timeout), egress, triggers(cfg), authOf(f),
+	}
+}
+
+// FormatFunctions renders `oort ls` rows as an aligned table.
 // now is injected for tests.
 func FormatFunctions(fns []Function, now time.Time) string {
 	rows := make([][]string, 0, len(fns))
 	for _, f := range fns {
-		cfg, _ := deploy.ParseConfig(f.ConfigTOML) // empty on error; zeros mean defaults
-		timeout := runner.DefaultTimeout
-		if cfg.TimeoutMs != 0 {
-			timeout = time.Duration(cfg.TimeoutMs) * time.Millisecond
-		}
-		mem := runner.DefaultMemory
-		if cfg.MemoryMB != 0 {
-			mem = cfg.MemoryMB
-		}
-		route := cfg.Route
-		if route == "" {
-			route = "/f/" + f.Name
-		}
-		egress := "no"
-		if cfg.AllowEgress {
-			egress = "yes"
-		}
-		status, uptime, last := "cold", "-", "-"
-		if len(f.Warm) > 0 {
-			status = "warm"
-			if len(f.Warm) > 1 {
-				status = fmt.Sprintf("warmx%d", len(f.Warm))
-			}
-			oldest, newest := f.Warm[0].StartedAt, f.Warm[0].LastUsed
-			for _, w := range f.Warm[1:] {
-				if w.StartedAt.Before(oldest) {
-					oldest = w.StartedAt
-				}
-				if w.LastUsed.After(newest) {
-					newest = w.LastUsed
-				}
-			}
-			if !oldest.IsZero() {
-				uptime = shortDur(now.Sub(oldest))
-			}
-			if !newest.IsZero() {
-				last = shortDur(now.Sub(newest)) + " ago"
-			}
-		}
-		rows = append(rows, []string{
-			f.Name, f.ActiveVersion, cfg.Runtime, route, status, uptime, last,
-			shortTime(f.DeployedAt), fmt.Sprintf("%d", mem), shortDur(timeout), egress, triggers(cfg), authOf(f),
-		})
+		rows = append(rows, FunctionRow(f, now))
 	}
-	head := []string{"NAME", "VER", "RUNTIME", "ROUTE", "STATUS", "UPTIME", "LAST USED", "DEPLOYED", "MEM", "TIMEOUT", "EGRESS", "TRIGGERS", "AUTH"}
+	head := FunctionHeader()
 	widths := make([]int, len(head))
 	for i, h := range head {
 		widths[i] = len(h)
@@ -133,7 +144,7 @@ func FormatFunctions(fns []Function, now time.Time) string {
 	return b.String()
 }
 
-// authOf renders the invoke auth mode for `actions ls`.
+// authOf renders the invoke auth mode for `oort ls`.
 func authOf(f Function) string {
 	if f.AuthMode == "" {
 		return "public"

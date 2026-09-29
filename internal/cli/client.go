@@ -112,7 +112,7 @@ func EnqueueDeploy(baseURL, token, name, configTOML string, srcZip []byte) (*Dep
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == 401 {
-		return nil, fmt.Errorf("deploy: unauthorized (run `actions login`)")
+		return nil, fmt.Errorf("deploy: unauthorized (run `oort login`)")
 	}
 	if resp.StatusCode != http.StatusAccepted {
 		return nil, fmt.Errorf("deploy: %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
@@ -218,7 +218,7 @@ func DeployWithAuth(baseURL, token, name, configTOML string, srcZip []byte) (*De
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == 401 {
-		return nil, fmt.Errorf("deploy: unauthorized (run `actions login`)")
+		return nil, fmt.Errorf("deploy: unauthorized (run `oort login`)")
 	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("deploy: %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
@@ -306,7 +306,7 @@ func ListFunctionsWithAuth(baseURL, token string) ([]Function, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 401 {
-		return nil, fmt.Errorf("unauthorized (run `actions login`)")
+		return nil, fmt.Errorf("unauthorized (run `oort login`)")
 	}
 	var out []Function
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -341,7 +341,7 @@ func GetLogsWithAuth(baseURL, token, fn string) ([]LogLine, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 401 {
-		return nil, fmt.Errorf("unauthorized (run `actions login`)")
+		return nil, fmt.Errorf("unauthorized (run `oort login`)")
 	}
 	if resp.StatusCode != 200 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
@@ -419,7 +419,7 @@ func Me(baseURL, token string) (*Whoami, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 401 {
-		return nil, fmt.Errorf("unauthorized (run `actions login`)")
+		return nil, fmt.Errorf("unauthorized (run `oort login`)")
 	}
 	var out Whoami
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -464,7 +464,7 @@ func CreateAPIKey(baseURL, token, fn, name string) (*APIKeyCreated, error) {
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
 	if resp.StatusCode == 401 {
-		return nil, fmt.Errorf("unauthorized (run `actions login`)")
+		return nil, fmt.Errorf("unauthorized (run `oort login`)")
 	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("keys create: %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
@@ -496,7 +496,7 @@ func ListAPIKeys(baseURL, token, fn string) ([]APIKeyInfo, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 401 {
-		return nil, fmt.Errorf("unauthorized (run `actions login`)")
+		return nil, fmt.Errorf("unauthorized (run `oort login`)")
 	}
 	var out []APIKeyInfo
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -519,7 +519,7 @@ func RevokeAPIKey(baseURL, token, id string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 401 {
-		return fmt.Errorf("unauthorized (run `actions login`)")
+		return fmt.Errorf("unauthorized (run `oort login`)")
 	}
 	if resp.StatusCode != 200 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))

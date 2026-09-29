@@ -225,7 +225,7 @@ func RegisterAuthRoutes(mux *http.ServeMux, st *store.Store) {
 				Kind:    "expired",
 				Title:   "Link expired",
 				Heading: "This login link expired",
-				Message: "Device codes are valid for 10 minutes. Run `actions login` again in your terminal to get a fresh code.",
+				Message: "Device codes are valid for 10 minutes. Run `oort login` again in your terminal to get a fresh code.",
 			}))
 			return
 		}
@@ -279,7 +279,7 @@ func RegisterAuthRoutes(mux *http.ServeMux, st *store.Store) {
 					Kind:    "expired",
 					Title:   "Link expired",
 					Heading: "This login link expired",
-					Message: msg + " Run `actions login` again for a fresh code.",
+					Message: msg + " Run `oort login` again for a fresh code.",
 				}))
 				return
 			}
@@ -297,7 +297,7 @@ func RegisterAuthRoutes(mux *http.ServeMux, st *store.Store) {
 					Kind:    "error",
 					Title:   "Missing code",
 					Heading: "Verification code missing",
-					Message: "Open this page from the link printed by `actions login` so the device code is included.",
+					Message: "Open this page from the link printed by `oort login` so the device code is included.",
 				}))
 			}
 			return
@@ -317,7 +317,7 @@ func RegisterAuthRoutes(mux *http.ServeMux, st *store.Store) {
 				Kind:    "expired",
 				Title:   "Link expired",
 				Heading: "This login link expired",
-				Message: "This code is unknown or older than 10 minutes. Run `actions login` again for a fresh code.",
+				Message: "This code is unknown or older than 10 minutes. Run `oort login` again for a fresh code.",
 			}))
 			return
 		}
@@ -362,7 +362,7 @@ func RegisterAuthRoutes(mux *http.ServeMux, st *store.Store) {
 				Kind:    "error",
 				Title:   "Something went wrong",
 				Heading: "Couldn't verify this device",
-				Message: "Please go back and try again. If it keeps failing, run `actions login` for a fresh code.",
+				Message: "Please go back and try again. If it keeps failing, run `oort login` for a fresh code.",
 			}))
 			return
 		}
@@ -475,7 +475,7 @@ func loginShell(title, body string) string {
 	return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
 		`<meta name="viewport" content="width=device-width,initial-scale=1">` +
 		`<meta name="color-scheme" content="dark">` +
-		`<title>` + html.EscapeString(title) + ` — Actions</title><style>` +
+		`<title>` + html.EscapeString(title) + ` — Oort</title><style>` +
 		`:root{color-scheme:dark;--bg:#0b0f14;--card:#141b25;--border:#26303d;` +
 		`--text:#e6edf3;--muted:#8b949e;--accent:#2f81f7;--accent-h:#1f6feb;` +
 		`--danger-bg:#3d1a1e;--danger-bd:#7a2e35;--danger-tx:#ffb4ab;` +
@@ -511,9 +511,9 @@ func loginShell(title, body string) string {
 		`.foot{color:var(--muted);font-size:12.5px;text-align:center;margin:18px 0 0}` +
 		`a{color:#6ea8fe}@media(max-width:520px){.wrap{padding-top:32px}.card{padding:22px}}` +
 		`</style></head><body><main class="wrap">` +
-		`<div class="brand"><span class="dot" aria-hidden="true"></span><b>Actions</b><span>device verification</span></div>` +
+		`<div class="brand"><span class="dot" aria-hidden="true"></span><b>Oort</b><span>device verification</span></div>` +
 		`<div class="card">` + body + `</div>` +
-		`<p class="foot">Code expires 10 minutes after <code>actions login</code> &middot; never share your password</p>` +
+		`<p class="foot">Code expires 10 minutes after <code>oort login</code> &middot; never share your password</p>` +
 		`</main><script>` +
 		`var f=document.getElementById("login-form"),b=document.getElementById("login-btn");` +
 		`if(f&&b){f.addEventListener("submit",function(){b.disabled=true;b.textContent="Verifying…";});}` +

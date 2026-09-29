@@ -1,6 +1,6 @@
 // Package bus delivers queue messages to subscriber functions.
 // NATS JetStream (stream "events", subjects events.>) when NATS_URL is
-// reachable; otherwise an in-process fallback so `actions dev` and tests
+// reachable; otherwise an in-process fallback so `oort dev` and tests
 // run without infrastructure. Topic "orders.created" maps to "events.orders.created".
 package bus
 
