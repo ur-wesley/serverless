@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -58,22 +57,41 @@ func newInitCmd() *cobra.Command {
 func newDevCmd() *cobra.Command {
 	var dir, url string
 	var offline bool
+	var port int
+	var watch bool
 	cmd := &cobra.Command{
 		Use:   "dev [-- cmd...]",
-		Short: "Run handler locally",
-		Long:  "Run the handler locally with PORT + ACTIONS_SIDECAR_URL set. Extra args after -- replace the default handler command.",
+		Short: "Run handler locally with stable URL + auto-reload",
+		Long:  "Run the handler locally with PORT + ACTIONS_SIDECAR_URL set, behind a stable dev gateway (http://localhost:PORT) that translates plain HTTP into POST /invoke. Extra args after -- replace the default handler command.",
 		Example: `  oort dev
-  oort dev --offline
+  oort dev --port 3000 --watch
+  oort dev --port 0 --watch=false
   oort dev -- bun src/index.ts`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			urlChanged := cmd.Flags().Changed("url")
+			offlineChanged := cmd.Flags().Changed("offline")
 			if url == "" {
 				url = baseURL()
 			}
-			return cli.Dev(context.Background(), dir, url, offline, args)
+			// Default to offline mock unless the user explicitly points
+			// at a control plane via --url.
+			offlineEff := offline
+			if !offlineChanged && urlChanged {
+				offlineEff = false
+			}
+			if !offlineChanged && !urlChanged {
+				offlineEff = true
+			}
+			return cli.DevWithOptions(cmd.Context(), cli.DevOptions{
+				Dir: dir, URL: url, Offline: offlineEff,
+				CmdArgs: args, Port: port, Watch: watch,
+			})
 		},
 	}
 	cmd.Flags().StringVar(&dir, "dir", ".", "function dir")
 	cmd.Flags().StringVar(&url, "url", "", "control plane base (proxy mode)")
-	cmd.Flags().BoolVar(&offline, "offline", false, "use in-memory sidecar mock")
+	cmd.Flags().BoolVar(&offline, "offline", true, "use in-memory sidecar mock")
+	cmd.Flags().IntVar(&port, "port", 3000, "stable dev gateway port (0 = random free port)")
+	cmd.Flags().BoolVar(&watch, "watch", true, "restart handler on file change")
 	return cmd
 }

@@ -94,3 +94,15 @@ func TestKeysHelpListsSubcommands(t *testing.T) {
 		}
 	}
 }
+
+func TestDevHelpListsPortWatch(t *testing.T) {
+	out, err := run(t, "dev", "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--port", "--watch", "--offline", "--dir"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in dev help:\n%s", want, out)
+		}
+	}
+}
