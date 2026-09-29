@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"os"
 
-	cli "github.com/ur-wesley/serverless/internal/cli/cmd"
-	"github.com/ur-wesley/serverless/internal/cli/ui"
+	cli "github.com/ur-wesley/oort/internal/cli/cmd"
+	"github.com/ur-wesley/oort/internal/cli/ui"
 )
 
 func main() {

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ur-wesley/serverless/internal/cli/ui"
-	"github.com/ur-wesley/serverless/internal/version"
+	"github.com/ur-wesley/oort/internal/cli/ui"
+	"github.com/ur-wesley/oort/internal/version"
 )
 
 func run(t *testing.T, args ...string) (string, error) {

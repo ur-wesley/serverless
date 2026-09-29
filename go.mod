@@ -1,4 +1,4 @@
-module github.com/ur-wesley/serverless
+module github.com/ur-wesley/oort
 
 go 1.27
 

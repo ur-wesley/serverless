@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ur-wesley/serverless/internal/store"
+	"github.com/ur-wesley/oort/internal/store"
 )
 
 // MaxBuildLog caps the persisted build log artifact (tail is kept).

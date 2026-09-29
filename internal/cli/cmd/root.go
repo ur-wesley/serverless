@@ -11,9 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ur-wesley/serverless/internal/cli"
-	"github.com/ur-wesley/serverless/internal/cli/ui"
-	"github.com/ur-wesley/serverless/internal/version"
+	"github.com/ur-wesley/oort/internal/cli"
+	"github.com/ur-wesley/oort/internal/cli/ui"
+	"github.com/ur-wesley/oort/internal/version"
 )
 
 // Options carries the global flags.

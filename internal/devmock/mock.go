@@ -6,9 +6,9 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/ur-wesley/serverless/internal/artifacts"
-	"github.com/ur-wesley/serverless/internal/bus"
-	"github.com/ur-wesley/serverless/internal/sidecar"
+	"github.com/ur-wesley/oort/internal/artifacts"
+	"github.com/ur-wesley/oort/internal/bus"
+	"github.com/ur-wesley/oort/internal/sidecar"
 )
 
 type Mock struct {

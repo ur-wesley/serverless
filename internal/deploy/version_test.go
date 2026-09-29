@@ -3,7 +3,7 @@ package deploy
 import (
 	"testing"
 
-	"github.com/ur-wesley/serverless/internal/store"
+	"github.com/ur-wesley/oort/internal/store"
 )
 
 func TestParseVersion(t *testing.T) {

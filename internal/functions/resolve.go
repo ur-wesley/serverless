@@ -17,10 +17,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ur-wesley/serverless/internal/auth"
-	"github.com/ur-wesley/serverless/internal/deploy"
-	"github.com/ur-wesley/serverless/internal/runner"
-	"github.com/ur-wesley/serverless/internal/store"
+	"github.com/ur-wesley/oort/internal/auth"
+	"github.com/ur-wesley/oort/internal/deploy"
+	"github.com/ur-wesley/oort/internal/runner"
+	"github.com/ur-wesley/oort/internal/store"
 )
 
 // Info carries auth/identity alongside the runnable ref.

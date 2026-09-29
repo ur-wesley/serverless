@@ -14,11 +14,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ur-wesley/serverless/internal/auth"
-	"github.com/ur-wesley/serverless/internal/functions"
-	"github.com/ur-wesley/serverless/internal/gateway"
-	"github.com/ur-wesley/serverless/internal/runner"
-	"github.com/ur-wesley/serverless/internal/store"
+	"github.com/ur-wesley/oort/internal/auth"
+	"github.com/ur-wesley/oort/internal/functions"
+	"github.com/ur-wesley/oort/internal/gateway"
+	"github.com/ur-wesley/oort/internal/runner"
+	"github.com/ur-wesley/oort/internal/store"
 )
 
 type ctxKey string

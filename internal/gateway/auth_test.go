@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/ur-wesley/serverless/internal/runner"
+	"github.com/ur-wesley/oort/internal/runner"
 )
 
 func testHooks() AuthHooks {

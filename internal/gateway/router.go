@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ur-wesley/serverless/internal/runner"
+	"github.com/ur-wesley/oort/internal/runner"
 )
 
 // Wire format (protojson-compatible, hand-rollable):

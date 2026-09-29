@@ -776,7 +776,7 @@ const file_actions_v1_sidecar_proto_rawDesc = "" +
 	"\fQueuePublish\x12\x1f.actions.v1.QueuePublishRequest\x1a .actions.v1.QueuePublishResponse2V\n" +
 	"\n" +
 	"LogService\x12H\n" +
-	"\tLogAppend\x12\x1c.actions.v1.LogAppendRequest\x1a\x1d.actions.v1.LogAppendResponseB%Z#github.com/ur-wesley/serverless/gen/go/actions/v1;actionsv1b\x06proto3"
+	"\tLogAppend\x12\x1c.actions.v1.LogAppendRequest\x1a\x1d.actions.v1.LogAppendResponseB%Z#github.com/ur-wesley/oort/gen/go/actions/v1;actionsv1b\x06proto3"
 
 var (
 	file_actions_v1_sidecar_proto_rawDescOnce sync.Once

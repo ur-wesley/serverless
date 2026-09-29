@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ur-wesley/serverless/internal/auth"
+	"github.com/ur-wesley/oort/internal/auth"
 )
 
 func openTest(t *testing.T) *Store {

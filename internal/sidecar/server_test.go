@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ur-wesley/serverless/internal/bus"
+	"github.com/ur-wesley/oort/internal/bus"
 )
 
 func testServer() *Server {

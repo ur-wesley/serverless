@@ -17,17 +17,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ur-wesley/serverless/internal/artifacts"
-	"github.com/ur-wesley/serverless/internal/auth"
-	"github.com/ur-wesley/serverless/internal/bus"
-	"github.com/ur-wesley/serverless/internal/controlauth"
-	"github.com/ur-wesley/serverless/internal/deploy"
-	"github.com/ur-wesley/serverless/internal/functions"
-	"github.com/ur-wesley/serverless/internal/gateway"
-	"github.com/ur-wesley/serverless/internal/runner"
-	"github.com/ur-wesley/serverless/internal/scheduler"
-	"github.com/ur-wesley/serverless/internal/sidecar"
-	"github.com/ur-wesley/serverless/internal/store"
+	"github.com/ur-wesley/oort/internal/artifacts"
+	"github.com/ur-wesley/oort/internal/auth"
+	"github.com/ur-wesley/oort/internal/bus"
+	"github.com/ur-wesley/oort/internal/controlauth"
+	"github.com/ur-wesley/oort/internal/deploy"
+	"github.com/ur-wesley/oort/internal/functions"
+	"github.com/ur-wesley/oort/internal/gateway"
+	"github.com/ur-wesley/oort/internal/runner"
+	"github.com/ur-wesley/oort/internal/scheduler"
+	"github.com/ur-wesley/oort/internal/sidecar"
+	"github.com/ur-wesley/oort/internal/store"
 )
 
 func withRecovery(next http.Handler) http.Handler {

@@ -19,11 +19,11 @@ import (
 
 	"github.com/robfig/cron/v3"
 
-	"github.com/ur-wesley/serverless/internal/bus"
-	"github.com/ur-wesley/serverless/internal/deploy"
-	"github.com/ur-wesley/serverless/internal/functions"
-	"github.com/ur-wesley/serverless/internal/runner"
-	"github.com/ur-wesley/serverless/internal/store"
+	"github.com/ur-wesley/oort/internal/bus"
+	"github.com/ur-wesley/oort/internal/deploy"
+	"github.com/ur-wesley/oort/internal/functions"
+	"github.com/ur-wesley/oort/internal/runner"
+	"github.com/ur-wesley/oort/internal/store"
 )
 
 type Scheduler struct {

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ur-wesley/serverless/internal/bus"
-	"github.com/ur-wesley/serverless/internal/sidecar"
+	"github.com/ur-wesley/oort/internal/bus"
+	"github.com/ur-wesley/oort/internal/sidecar"
 )
 
 func TestInvokeRoundTrip(t *testing.T) {

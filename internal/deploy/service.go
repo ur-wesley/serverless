@@ -22,9 +22,9 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/robfig/cron/v3"
 
-	"github.com/ur-wesley/serverless/internal/artifacts"
-	"github.com/ur-wesley/serverless/internal/auth"
-	"github.com/ur-wesley/serverless/internal/store"
+	"github.com/ur-wesley/oort/internal/artifacts"
+	"github.com/ur-wesley/oort/internal/auth"
+	"github.com/ur-wesley/oort/internal/store"
 )
 
 var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
