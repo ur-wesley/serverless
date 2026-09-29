@@ -6,7 +6,7 @@ Any language that compiles to a Linux binary runs if it speaks the ABI:
 ## Install (prebuilt CLI)
 
 ```sh
-npm i -g @ur-wesley/serverless
+npm i -g @ur-wesley/oort
 oort --help
 ```
 
@@ -15,8 +15,10 @@ the `v<version>` GitHub Release. Other platforms: `go build -o oort ./cmd/oort`.
 Releases are cut by pushing a `v*` tag matching root `package.json`
 (`.github/workflows/release-cli.yml` builds, publishes the release,
 auto-publishes the npm wrapper, and auto-publishes the SDKs in lockstep:
-`@ur-wesley/serverless-sdk` on npm and `github.com/ur-wesley/serverless/sdks/go`
+`@ur-wesley/oort-sdk` on npm and `github.com/ur-wesley/oort/sdks/go`
 via the same tag).
+Bump with `npx bumpp [patch|minor|major|<version>]` (`bump.config.ts` keeps
+every manifest in lockstep; commits + tags, does not push).
 
 ## Quickstart (dev on Docker host)
 
@@ -69,11 +71,76 @@ output, `-o json` gives JSON for `ls`, `jobs`, `keys ls`, `whoami`,
 `logs` and `invoke`, and `oort completion [bash|zsh|fish|powershell]`
 emits shell completion.
 
-Offline handler dev (in-memory KV/Blob/Queue mock, no control plane):
+Offline handler dev = `bun run dev` equivalent (in-memory KV/Blob/Queue
+mock, no control plane; stable local URL + auto-reload):
 
 ```sh
-go run ./cmd/oort dev --dir ./hello --offline
+go run ./cmd/oort dev --dir ./hello --port 3000 --watch
+# open http://localhost:3000/f/hello/hi — any path becomes event.path
+# via POST /invoke; edit src to restart the handler, gateway stays up
 ```
+
+## SDKs
+
+`sdks/{go,ts,rust}/` are thin wrappers over the ABI — no proto dependency in
+handlers. Any language works raw (`GET /healthz` → 200, `POST /invoke` →
+`{status, headers, body}`, bodies base64); see `examples/hello-ts/src/index.ts`
+and `examples/hello-go/main.go` for hand-rolled JSON. TS details:
+`sdks/ts/README.md`, Rust details: `sdks/rust/README.md`.
+
+```sh
+npm i @ur-wesley/oort-sdk   # TS
+cargo add oort-sdk          # Rust
+```
+
+```ts
+import { defineHandler, serve } from "@ur-wesley/oort-sdk/handler";
+import { envFromEnv } from "@ur-wesley/oort-sdk/sidecar";
+
+export default defineHandler(async (ctx, event) => {
+  const env = envFromEnv();
+  await env.log(ctx.functionName, ctx.version, ctx.requestId, "hello");
+  return { status: 200, body: "ok" };
+});
+```
+
+```go
+import sdk "github.com/ur-wesley/oort/sdks/go"
+
+func main() {
+  sdk.HandleFunc(func(ctx context.Context, c sdk.Ctx, e sdk.Event) sdk.Response {
+    env := sdk.FromEnv()
+    _ = env.Logf(ctx, c.FunctionName, c.Version, c.RequestID, "hello")
+    return sdk.Response{Status: 200, Body: []byte("ok")}
+  })
+}
+```
+
+```rust
+use oort_sdk::{serve, Ctx, Env, Event, Response};
+
+#[tokio::main]
+async fn main() {
+    serve(|ctx: Ctx, _event: Event| async move {
+        let env = Env::from_env();
+        let _ = env.log(&ctx.function_name, &ctx.version, &ctx.request_id, "hello").await;
+        Response::ok("ok")
+    })
+    .await;
+}
+```
+
+* Handler: TS `defineHandler` / `serve` (`sdks/ts/handler.ts`), Go
+  `sdk.HandleFunc` / `sdk.NewHandler(h)` for embedding/tests (`sdks/go/sdk.go`),
+  Rust `oort_sdk::serve` / `oort_sdk::router` (`sdks/rust/src/lib.rs`).
+* Sidecar client: TS `envFromEnv()` (`sdks/ts/sidecar.ts`), Go `sdk.FromEnv()`,
+  Rust `Env::from_env()`.
+  Config comes from `ACTIONS_SIDECAR_URL` / `ACTIONS_SIDECAR_TOKEN`
+  (auto-injected; also on `ctx.sidecarUrl` / `c.SidecarURL` / `ctx.sidecar_url`).
+  `mockEnv()` (TS) / `MockEnv` (Rust) covers `oort dev --offline`.
+* API (same all SDKs): `KVGet/Put/Del`, `BlobPutBytes/GetBytes`,
+  `QueuePublish`, `Log`, `LogsTail` + `FunctionsList` + `InvokeOther`
+  (intercom: needs `allow_*` + same owner).
 
 ## Full platform
 
@@ -89,7 +156,7 @@ protoc-gen-es, protoc-gen-connect-es on PATH).
 ## Layout
 
 `cmd/{controlplane,oort}/` · `internal/{gateway,runner,scheduler,deploy,store,artifacts,bus,sidecar,functions,builder,cli,devmock}/`
-· `builders/builder-{ts,go}/` · `sdks/{go,ts}/` · `examples/hello-{ts,go}/` · `examples/echo-go/`
+· `builders/builder-{ts,go}/` · `sdks/{go,ts,rust}/` · `examples/hello-{ts,go,rust}/` · `examples/echo-go/`
 
 ## Hardening (docker-runsc only, no Firecracker)
 
