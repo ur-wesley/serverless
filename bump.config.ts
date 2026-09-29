@@ -4,8 +4,8 @@
 // lockstep manifest in one go. The release workflow fails the release
 // unless all of these agree, so never bump them by hand:
 //
-//   package.json, sdks/ts/package.json (+ lockfile), npm/package.json,
-//   internal/version/package.json (must stay a byte-exact copy of the root)
+//   package.json, sdks/ts/package.json (+ lockfile), sdks/rust/Cargo.toml,
+//   npm/package.json, internal/version/package.json (byte-exact root copy)
 //
 // Usage (from the repo root):
 //   npx bumpp patch        # 0.1.1 -> 0.1.2
@@ -13,6 +13,8 @@
 // Both commit ("chore: release vX.Y.Z") and tag (vX.Y.Z) without pushing;
 // push the tag deliberately to cut the release:
 //   git push --follow-tags
+import { execFileSync } from 'node:child_process'
+import { copyFileSync } from 'node:fs'
 import { defineConfig } from 'bumpp'
 
 export default defineConfig({
@@ -21,16 +23,21 @@ export default defineConfig({
     'package.json',
     'sdks/ts/package.json',
     'sdks/ts/package-lock.json',
+    'sdks/rust/Cargo.toml',
     'npm/package.json',
     'internal/version/package.json',
   ],
-  // Re-copy instead of trusting the in-place edit: the workflow enforces
-  // `cmp package.json internal/version/package.json`. node (not cp) so this
-  // works on Windows too.
-  execute:
-    "node -e \"require('node:fs').copyFileSync('package.json', 'internal/version/package.json')\"",
-  commit: 'chore: release v{version}',
-  tag: 'v{version}',
+  // Sync the embedded version and Rust lockfiles after bumping their manifest.
+  execute: () => {
+    copyFileSync('package.json', 'internal/version/package.json')
+    for (const manifest of ['sdks/rust/Cargo.toml', 'examples/hello-rust/Cargo.toml']) {
+      execFileSync('cargo', ['update', '--manifest-path', manifest, '--package', 'oort-sdk', '--offline'], {
+        stdio: 'inherit',
+      })
+    }
+  },
+  commit: 'chore: release v%s',
+  tag: 'v%s',
   // Pushing the tag starts the release workflow — keep that deliberate.
   push: false,
 })

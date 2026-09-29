@@ -1,6 +1,6 @@
 [package]
 name = "oort-sdk"
-version = "0.1.1"
+version = "0.2.1"
 edition = "2021"
 description = "Rust SDK for Oort — handler ABI (GET /healthz, POST /invoke) plus sidecar Env client (KV, blobs, queue, logs, intercom)."
 license = "MIT"
