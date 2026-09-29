@@ -4,8 +4,8 @@ version = "0.2.1"
 edition = "2021"
 description = "Rust SDK for Oort — handler ABI (GET /healthz, POST /invoke) plus sidecar Env client (KV, blobs, queue, logs, intercom)."
 license = "MIT"
-repository = "https://github.com/ur-wesley/oort"
-homepage = "https://github.com/ur-wesley/oort#readme"
+repository = "https://github.com/ur-wesley/serverless"
+homepage = "https://github.com/ur-wesley/serverless#readme"
 
 [dependencies]
 axum = "0.7"

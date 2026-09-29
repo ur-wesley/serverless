@@ -28,10 +28,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ur-wesley/oort.git",
+    "url": "git+https://github.com/ur-wesley/serverless.git",
     "directory": "sdks/ts"
   },
-  "homepage": "https://github.com/ur-wesley/oort#readme",
+  "homepage": "https://github.com/ur-wesley/serverless#readme",
   "publishConfig": {
     "access": "public"
   },

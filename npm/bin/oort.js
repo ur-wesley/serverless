@@ -33,7 +33,7 @@ function installHint() {
     `  bun install --trust\n` +
     `or add to your project's package.json:\n` +
     `  { "trustedDependencies": ["@ur-wesley/oort"] }\n` +
-    `or download manually from https://github.com/ur-wesley/oort/releases`
+    `or download manually from https://github.com/ur-wesley/serverless/releases`
   );
 }
 

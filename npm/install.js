@@ -7,7 +7,7 @@ const fs = require("fs");
 const path = require("path");
 const { assetName, unsupportedMessage } = require("./lib/asset");
 
-const REPO = process.env.ACTIONS_CLI_GITHUB_REPO || "ur-wesley/oort";
+const REPO = process.env.ACTIONS_CLI_GITHUB_REPO || "ur-wesley/serverless";
 
 async function main() {
   const asset = assetName();
