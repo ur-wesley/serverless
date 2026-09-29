@@ -1,4 +1,4 @@
-# Actions — single-node serverless binary platform
+# Oort — single-node binary platform
 
 Any language that compiles to a Linux binary runs if it speaks the ABI:
 `GET /healthz` → 200, `POST /invoke` (`{event, ctx}` protojson) → `{status, headers, body}`.
@@ -7,11 +7,11 @@ Any language that compiles to a Linux binary runs if it speaks the ABI:
 
 ```sh
 npm i -g @ur-wesley/serverless
-actions --help
+oort --help
 ```
 
 Ships `linux/x64`, `macOS Apple Silicon (arm64)`, `windows/x64` binaries from
-the `v<version>` GitHub Release. Other platforms: `go build -o actions ./cmd/actions`.
+the `v<version>` GitHub Release. Other platforms: `go build -o oort ./cmd/oort`.
 Releases are cut by pushing a `v*` tag matching root `package.json`
 (`.github/workflows/release-cli.yml` builds, publishes the release,
 auto-publishes the npm wrapper, and auto-publishes the SDKs in lockstep:
@@ -22,18 +22,18 @@ via the same tag).
 
 ```sh
 # 1. Scaffold
-go run ./cmd/actions init --runtime go --name hello --dir ./hello
+go run ./cmd/oort init --runtime go --name hello --dir ./hello
 # 2. Log in (first login creates your account via browser verification)
-go run ./cmd/actions login
+go run ./cmd/oort login
 # 3. Run control plane (needs Docker; NATS optional — falls back to memory bus)
 go run ./cmd/controlplane
 # 4. Deploy / call / list (URL + token come from the saved login)
-go run ./cmd/actions deploy --dir ./hello   # enqueues, streams build log, waits
-go run ./cmd/actions deploy --dir ./hello --no-wait  # enqueue only
-go run ./cmd/actions jobs hello             # deploy history + build status
-go run ./cmd/actions invoke -d ping hello/hi
-go run ./cmd/actions ls
-go run ./cmd/actions logs hello
+go run ./cmd/oort deploy --dir ./hello   # enqueues, streams build log, waits
+go run ./cmd/oort deploy --dir ./hello --no-wait  # enqueue only
+go run ./cmd/oort jobs hello             # deploy history + build status
+go run ./cmd/oort invoke -d ping hello/hi
+go run ./cmd/oort ls
+go run ./cmd/oort logs hello
 ```
 
 Versions are semver: first deploy is `0.1.0`, then patch auto-bumps.
@@ -53,20 +53,26 @@ open by default.
 Per-function protection (`actions.toml: auth_mode = "public"|"key"|"private"`):
 
 ```sh
-go run ./cmd/actions keys create hello --name ci   # prints ak_... once
-go run ./cmd/actions keys ls hello
-go run ./cmd/actions keys revoke <id>
-go run ./cmd/actions invoke --api-key ak_... hello/hi
+go run ./cmd/oort keys create hello --name ci   # prints ak_... once
+go run ./cmd/oort keys ls hello
+go run ./cmd/oort keys revoke <id>
+go run ./cmd/oort invoke --api-key ak_... hello/hi
 ```
 
 Each app can have multiple keys; only `sha256` hashes are stored.
 Functions are user-scoped: `/f/<you>/<app>/...` namespace routing plus a
 random public slug per function (`/s/<slug>/...`) for sharing.
 
+Display: on a TTY the CLI uses color, tables and spinners; pipes and CI
+automatically get plain text. `--plain` (or `NO_COLOR=1`) forces plain
+output, `-o json` gives JSON for `ls`, `jobs`, `keys ls`, `whoami`,
+`logs` and `invoke`, and `oort completion [bash|zsh|fish|powershell]`
+emits shell completion.
+
 Offline handler dev (in-memory KV/Blob/Queue mock, no control plane):
 
 ```sh
-go run ./cmd/actions dev --dir ./hello --offline
+go run ./cmd/oort dev --dir ./hello --offline
 ```
 
 ## Full platform
@@ -82,7 +88,7 @@ protoc-gen-es, protoc-gen-connect-es on PATH).
 
 ## Layout
 
-`cmd/{controlplane,actions}/` · `internal/{gateway,runner,scheduler,deploy,store,artifacts,bus,sidecar,functions,builder,cli,devmock}/`
+`cmd/{controlplane,oort}/` · `internal/{gateway,runner,scheduler,deploy,store,artifacts,bus,sidecar,functions,builder,cli,devmock}/`
 · `builders/builder-{ts,go}/` · `sdks/{go,ts}/` · `examples/hello-{ts,go}/` · `examples/echo-go/`
 
 ## Hardening (docker-runsc only, no Firecracker)

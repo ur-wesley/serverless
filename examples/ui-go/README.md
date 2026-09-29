@@ -20,8 +20,8 @@ rerun the build after changing `frontend/src`.
 ## Deploy
 
 ```sh
-go run ./cmd/actions --url https://svr.w4y.io deploy --dir .
-go run ./cmd/actions --url https://svr.w4y.io invoke ui/
+go run ./cmd/oort --url https://svr.w4y.io deploy --dir .
+go run ./cmd/oort --url https://svr.w4y.io invoke ui/
 # open https://svr.w4y.io/f/ui/
 ```
 

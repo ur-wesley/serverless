@@ -104,7 +104,7 @@ class HttpEnv implements Env {
   }
 }
 
-/** In-memory mock for `actions dev --offline`. */
+/** In-memory mock for `oort dev --offline`. */
 export function mockEnv(): Env & { published: { topic: string; message: Uint8Array }[]; logs: string[] } {
   const kv = new Map<string, Uint8Array>();
   const blobs = new Map<string, Uint8Array>();

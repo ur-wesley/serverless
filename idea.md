@@ -70,14 +70,14 @@ No Postgres (multi-node only), no MinIO (replaced by RustFS), no Redis (replaced
 
 ```sh
 git clone <repo>
-go run ./cmd/actions --help
+go run ./cmd/oort --help
 # init, dev, deploy, invoke, logs, ls
 ```
 
-- `actions init --runtime ts|go` scaffolds `actions.toml + src/`.
-- `actions dev` runs SDK local server + proxies KV/Blob/Queue to dev control plane (or fully offline with mock).
-- `actions deploy` zips `src/`, uploads to `/deploy`, polls build.
-- `actions logs -f`, `actions invoke`, `actions ls`.
+- `oort init --runtime ts|go` scaffolds `actions.toml + src/`.
+- `oort dev` runs SDK local server + proxies KV/Blob/Queue to dev control plane (or fully offline with mock).
+- `oort deploy` zips `src/`, uploads to `/deploy`, polls build.
+- `oort logs -f`, `oort invoke`, `oort ls`.
 
 ### Config (`actions.toml`)
 
