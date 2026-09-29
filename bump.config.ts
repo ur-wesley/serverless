@@ -13,6 +13,14 @@
 // Both commit ("chore: release vX.Y.Z") and tag (vX.Y.Z) without pushing;
 // push the tag deliberately to cut the release:
 //   git push --follow-tags
+//
+// IMPORTANT: bumpp only commits the files listed above. The `execute` step
+// also refreshes the Rust lockfiles, which must be amended into the release
+// commit before tagging:
+//   git add sdks/rust/Cargo.lock examples/hello-rust/Cargo.lock
+//   git commit --amend --no-edit && git tag -f vX.Y.Z
+// (Lockfiles can't go in `files:` — bumpp would blindly rewrite every
+// matching version string, including unrelated crates.)
 import { execFileSync } from 'node:child_process'
 import { copyFileSync } from 'node:fs'
 import { defineConfig } from 'bumpp'

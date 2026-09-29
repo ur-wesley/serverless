@@ -1,6 +1,6 @@
 {
   "name": "@ur-wesley/oort",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Oort binary platform CLI — installs the prebuilt oort binary for your platform from GitHub Releases.",
   "license": "MIT",
   "bin": {
