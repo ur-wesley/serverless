@@ -23,3 +23,20 @@ Env overrides:
 
 - `ACTIONS_CLI_GITHUB_REPO=owner/repo` — download from a fork.
 - `OORT_FORCE_DOWNLOAD=1` — re-download on rebuild (`SERVERLESS_FORCE_DOWNLOAD` still works).
+
+## Bun
+
+Bun blocks `postinstall` scripts by default, so the binary download is
+skipped on `bun install` / `bun add @ur-wesley/oort`. Two options:
+
+1. Trust the package (one-time, in your project):
+   ```sh
+   bun pm trust @ur-wesley/oort
+   bun install --trust
+   ```
+   or add to your project's `package.json`:
+   ```json
+   { "trustedDependencies": ["@ur-wesley/oort"] }
+   ```
+2. Do nothing — `oort` downloads the binary automatically on first run
+   if it is missing (same checksum-verified download as postinstall).
