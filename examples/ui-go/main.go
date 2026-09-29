@@ -151,11 +151,20 @@ func handleAPI(req invokeRequest) (int, string, string) {
 			return mapSidecarError(err)
 		}
 		return 202, "text/plain", "accepted"
-	case strings.HasPrefix(p, "/api/invoke/") && method == "POST":
-		target := strings.TrimPrefix(p, "/api/invoke/")
-		target, _, _ = strings.Cut(target, "/")
-		if target == "" {
+	case strings.HasPrefix(p, "/api/invoke/") && (method == "POST" || method == "GET"):
+		rest := strings.TrimPrefix(p, "/api/invoke/")
+		target, sub, _ := strings.Cut(rest, "/")
+		if target == "" || strings.Contains(target, "/") {
 			return 400, "text/plain", "bad target"
+		}
+		fwdPath := "/" + strings.TrimPrefix(sub, "/")
+		// Normalize: "/"+"" -> "/", strip trailing slash except root so
+		// "/" and "" both reach the target handler the same way.
+		if len(fwdPath) > 1 {
+			fwdPath = strings.TrimSuffix(fwdPath, "/")
+			if fwdPath == "" {
+				fwdPath = "/"
+			}
 		}
 		var out struct {
 			Status  int               `json:"status"`
@@ -163,8 +172,9 @@ func handleAPI(req invokeRequest) (int, string, string) {
 			Body    string            `json:"body"`
 		}
 		if err := sidecarPost("/sidecar/invoke", map[string]any{
-			"target_function": target, "method": "POST", "path": "/",
-			"body": base64.StdEncoding.EncodeToString(rawBody),
+			"target_function": target, "method": method, "path": fwdPath,
+			"query": q,
+			"body":  base64.StdEncoding.EncodeToString(rawBody),
 		}, &out); err != nil {
 			return mapSidecarError(err)
 		}
@@ -183,7 +193,7 @@ func mapSidecarError(err error) (int, string, string) {
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "403") || strings.Contains(msg, "forbidden"):
-		return 403, "text/plain", "forbidden: allow_* in actions.toml + same owner required"
+		return 403, "text/plain", "forbidden: allow_* in actions.toml + same owner required (" + msg + "). Redeploy ui + target as the same owner after changing allow_*."
 	case strings.Contains(msg, "404") || strings.Contains(msg, "unknown function"):
 		return 404, "text/plain", "unknown function"
 	default:

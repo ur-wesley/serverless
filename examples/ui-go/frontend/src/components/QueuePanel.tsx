@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { getJSON, FnInfo } from "../api";
+import { api, getJSON, FnInfo } from "../api";
 import { btn, btnBlue, card, h2, input, pre, row } from "../ui";
 
 export default function QueuePanel() {
@@ -9,7 +9,7 @@ export default function QueuePanel() {
   async function publish() {
     setOut("publishing…");
     try {
-      const res = await fetch(`api/pub/${encodeURIComponent(topic())}`, {
+      const res = await fetch(api(`api/pub/${encodeURIComponent(topic())}`), {
         method: "POST",
         body: msg(),
       });
@@ -20,7 +20,7 @@ export default function QueuePanel() {
   }
   async function subscribers() {
     try {
-      const fns = await getJSON<FnInfo[]>("api/functions");
+      const fns = await getJSON<FnInfo[]>(api("api/functions"));
       setOut(`known functions: ${fns.map((f) => f.Name).join(", ")}\n(echo subscribes to orders.created)`);
     } catch (e) {
       setOut(`error: ${e}`);

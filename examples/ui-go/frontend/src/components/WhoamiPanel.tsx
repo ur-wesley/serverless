@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { getText } from "../api";
+import { api, postText } from "../api";
 import { btn, card, h2, pre } from "../ui";
 
 export default function WhoamiPanel() {
@@ -7,14 +7,15 @@ export default function WhoamiPanel() {
   async function load() {
     setOut("calling…");
     try {
-      setOut(await getText("/f/whoami/"));
+      // Intercom: ui backend invokes whoami (needs allow_invoke).
+      setOut(await postText(api("api/invoke/whoami/"), ""));
     } catch (e) {
       setOut(`error: ${e}`);
     }
   }
   return (
     <div class={card}>
-      <h2 class={h2}>whoami function</h2>
+      <h2 class={h2}>whoami function (via intercom)</h2>
       <p>
         <button class={btn} onClick={load}>ask whoami</button>
       </p>

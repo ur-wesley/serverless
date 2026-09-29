@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { postText } from "../api";
+import { api, postText } from "../api";
 import { btn, card, h2, input, pre, row } from "../ui";
 
 export default function EchoCaller() {
@@ -8,17 +8,18 @@ export default function EchoCaller() {
   async function call() {
     setOut("calling…");
     try {
-      setOut(await postText("/f/echo/call", msg()));
+      // Intercom: browser -> ui backend -> sidecar invoke (needs allow_invoke).
+      setOut(await postText(api("api/invoke/echo/call"), msg()));
     } catch (e) {
       setOut(`error: ${e}`);
     }
   }
   return (
     <div class={card}>
-      <h2 class={h2}>call the echo function</h2>
+      <h2 class={h2}>call the echo function (via intercom)</h2>
       <p class={row}>
         <input class={`${input} w-3/5`} value={msg()} onInput={(e) => setMsg(e.target.value)} />
-        <button class={btn} onClick={call}>call /f/echo</button>
+        <button class={btn} onClick={call}>call echo</button>
       </p>
       <pre class={`${pre} mt-2`}>{out()}</pre>
     </div>

@@ -3,9 +3,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -25,6 +27,7 @@ type invokeRequest struct {
 		FunctionName string `json:"function_name"`
 		Version      string `json:"version"`
 		RequestID    string `json:"request_id"`
+		SidecarURL   string `json:"sidecar_url"`
 	} `json:"ctx"`
 }
 
@@ -59,6 +62,8 @@ func main() {
 			fmt.Fprintf(&b, "  %s: %s\n", k, req.Event.Headers[k])
 		}
 		fmt.Fprintf(&b, "body (%d bytes):\n%s\n", len(raw), string(raw))
+		sidecarLog(req.Ctx.SidecarURL, req.Ctx.FunctionName, req.Ctx.Version, req.Ctx.RequestID,
+			fmt.Sprintf("http %s %s body=%d bytes", req.Event.Method, req.Event.Path, len(raw)))
 		writeJSON(w, invokeResponse{Status: 200, Headers: map[string]string{"content-type": "text/plain"}, Body: b64(b.String())})
 	})
 
@@ -83,6 +88,30 @@ func sortedKeys(m map[string]string) []string {
 }
 
 func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+
+func sidecarLog(sidecar, fn, ver, reqID, line string) {
+	if sidecar == "" {
+		return
+	}
+	raw, _ := json.Marshal(map[string]string{
+		"function_name": fn, "version": ver,
+		"request_id": reqID, "line": line,
+	})
+	req, err := http.NewRequest("POST", sidecar+"/sidecar/log/append", bytes.NewReader(raw))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if tok := os.Getenv("ACTIONS_SIDECAR_TOKEN"); tok != "" {
+		req.Header.Set("X-Actions-Token", tok)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 16*1024))
+}
 
 func writeJSON(w http.ResponseWriter, v invokeResponse) {
 	w.Header().Set("Content-Type", "application/json")

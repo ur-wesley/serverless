@@ -30,7 +30,26 @@ Bun.serve({
       const method = payload?.event?.method ?? "?";
       const path = payload?.event?.path ?? "?";
       const reqBody = b64decode(payload?.event?.body ?? "");
+      const fn = payload?.ctx?.function_name ?? "hello";
+      const sidecar: string = payload?.ctx?.sidecar_url ?? "";
       const text = `hello from hello-ts ${method} ${path} body=${reqBody}`;
+      // Fire-and-forget log so the ui dashboard logs tab has content.
+      if (sidecar) {
+        const tok = process.env.ACTIONS_SIDECAR_TOKEN ?? "";
+        fetch(`${sidecar}/sidecar/log/append`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(tok ? { "x-actions-token": tok } : {}),
+          },
+          body: JSON.stringify({
+            function_name: fn,
+            version: payload?.ctx?.version ?? "",
+            request_id: payload?.ctx?.request_id ?? "",
+            line: `http ${method} ${path} body=${reqBody.length} bytes`,
+          }),
+        }).catch(() => {});
+      }
       return Response.json({
         status: 200,
         headers: { "content-type": "text/plain" },

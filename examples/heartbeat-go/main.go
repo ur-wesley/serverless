@@ -95,6 +95,28 @@ func kvGet(sidecar, fn, key string) (string, bool) {
 	return string(b64decode(out.Value)), out.Found
 }
 
+func sidecarLog(sidecar, fn, ver, reqID, line string) {
+	if sidecar == "" {
+		return
+	}
+	raw, _ := json.Marshal(map[string]string{
+		"function_name": fn, "version": ver,
+		"request_id": reqID, "line": line,
+	})
+	req, err := http.NewRequest("POST", sidecar+"/sidecar/log/append", bytes.NewReader(raw))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	tokenHeader(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 16*1024))
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	body, _ := json.Marshal(v)
 	w.Header().Set("Content-Type", "application/json")
@@ -125,6 +147,7 @@ func main() {
 			now := time.Now().UTC().Format(time.RFC3339)
 			kvPut(sidecar, fn, "count", strconv.Itoa(n))
 			kvPut(sidecar, fn, "at", now)
+			sidecarLog(sidecar, fn, in.Ctx.Version, in.Ctx.RequestID, "cron beat")
 			writeJSON(w, 200, map[string]any{"beat": n, "at": now})
 			return
 		}
@@ -133,6 +156,7 @@ func main() {
 		if count == "" {
 			count = "0"
 		}
+		sidecarLog(sidecar, fn, in.Ctx.Version, in.Ctx.RequestID, "http read")
 		writeJSON(w, 200, map[string]any{
 			"fn": fn, "beats": count, "last_beat": at,
 			"hint": fmt.Sprintf("cron writes every minute; %s beats so far", count),

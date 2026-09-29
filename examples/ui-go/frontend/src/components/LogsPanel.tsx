@@ -1,5 +1,5 @@
 import { createSignal, For, onMount } from "solid-js";
-import { getJSON, FnInfo } from "../api";
+import { api, getJSON, FnInfo } from "../api";
 import { btn, card, h2, input, pre, row } from "../ui";
 
 interface LogLine {
@@ -16,7 +16,7 @@ export default function LogsPanel() {
   const [out, setOut] = createSignal("pick a function and press refresh…");
   onMount(async () => {
     try {
-      setFns(await getJSON<FnInfo[]>("api/functions"));
+      setFns(await getJSON<FnInfo[]>(api("api/functions")));
     } catch {
       /* control plane unreachable; manual name still works */
     }
@@ -24,7 +24,7 @@ export default function LogsPanel() {
   async function load() {
     setOut("loading…");
     try {
-      const lines = await getJSON<LogLine[]>(`api/logs?fn=${encodeURIComponent(fn())}`);
+      const lines = await getJSON<LogLine[]>(api(`api/logs?fn=${encodeURIComponent(fn())}`));
       setOut(
         lines.length === 0
           ? "(no log lines yet — invoke the function or publish to its topic first)"

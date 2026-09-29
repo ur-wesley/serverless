@@ -1,5 +1,5 @@
 import { createSignal, onCleanup, onMount } from "solid-js";
-import { getJSON } from "../api";
+import { api, postText } from "../api";
 import { btn, card, h2, muted, pre } from "../ui";
 
 interface Beat {
@@ -14,7 +14,9 @@ export default function HeartbeatPanel() {
   const [error, setError] = createSignal("");
   async function load() {
     try {
-      setBeat(await getJSON<Beat>("/f/heartbeat/"));
+      // Intercom: ui backend invokes heartbeat (needs allow_invoke).
+      const text = await postText(api("api/invoke/heartbeat/"), "");
+      setBeat(JSON.parse(text) as Beat);
       setError("");
     } catch (e) {
       setError(`error: ${e}`);

@@ -34,7 +34,15 @@ with `ACTIONS_SIDECAR_TOKEN`:
 * `GET api/functions` → `POST /sidecar/functions/list` (own functions)
 * `GET api/logs?fn=` → `POST /sidecar/logs/tail` (needs `allow_logs`)
 * `POST api/pub/:topic` → `POST /sidecar/queue/publish`
-* `POST api/invoke/:fn` → `POST /sidecar/invoke` (needs `allow_invoke`)
+* `POST|GET api/invoke/:fn[/subpath]` → `POST /sidecar/invoke` (needs
+  `allow_invoke`; browser method/path/query/body are forwarded, so the
+  Echo/Whoami/Heartbeat panels work without direct `/f/*` fetches)
+
+Frontend resolves all calls against its own served base
+(`apiBase()` from `window.location.pathname`), so `/f/ui`, `/f/ui/`,
+and namespaced `/f/<owner>/ui` all work. Logs appear only for
+functions that append via `POST /sidecar/log/append` — echo, hello-go,
+hello-ts, whoami, and heartbeat now do this on every invoke.
 
 `actions.toml` opts in (default deny, same-owner only, `"*"` = all own):
 
@@ -47,3 +55,8 @@ allow_blobs = ["*"]
 
 Cross-owner is always 403, even with `"*"`. KV/blob sharing uses the same
 `allow_kv` / `allow_blobs` lists.
+
+Sidecar tokens are minted at container cold start from the deployed
+`actions.toml`, so after changing `allow_*` redeploy **both** `ui` and
+the target function as the **same owner** (warm containers keep the old
+policy otherwise).
