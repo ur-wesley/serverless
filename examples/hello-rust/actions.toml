@@ -1,0 +1,6 @@
+name = "hello-rust"
+runtime = "rust"
+route = "/f/hello-rust"
+timeout_ms = 10000
+memory_mb = 256
+allow_egress = false
