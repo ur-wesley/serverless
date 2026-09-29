@@ -9,6 +9,8 @@
 /data/
 /dist/
 node_modules/
+**/target/
+sdks/ts/dist/
 /npm/binaries/
 /npm/*.tgz
 

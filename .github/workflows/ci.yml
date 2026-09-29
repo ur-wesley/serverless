@@ -8,7 +8,11 @@ on:
 
 jobs:
   go:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -39,3 +43,25 @@ jobs:
         run: npm run check
       - working-directory: sdks/ts
         run: npm run build
+
+  rust-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Check SDK version lockstep
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          RUST_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' sdks/rust/Cargo.toml | head -1)"
+          echo "root: $PKG_VERSION rust-sdk: $RUST_VERSION"
+          test "$RUST_VERSION" = "$PKG_VERSION"
+      - working-directory: sdks/rust
+        run: cargo test --locked
+      - working-directory: sdks/rust
+        run: cargo clippy --all-targets -- -D warnings
+      - working-directory: sdks/rust
+        run: cargo fmt --check

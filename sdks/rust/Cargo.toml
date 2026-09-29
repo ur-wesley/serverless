@@ -1,0 +1,23 @@
+[package]
+name = "oort-sdk"
+version = "0.1.1"
+edition = "2021"
+description = "Rust SDK for Oort — handler ABI (GET /healthz, POST /invoke) plus sidecar Env client (KV, blobs, queue, logs, intercom)."
+license = "MIT"
+repository = "https://github.com/ur-wesley/oort"
+homepage = "https://github.com/ur-wesley/oort#readme"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
+
+[dev-dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
+serde_json = "1"
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
