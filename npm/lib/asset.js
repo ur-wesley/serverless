@@ -1,4 +1,4 @@
-// Shared platform → release asset mapping for @ur-wesley/serverless.
+// Shared platform → release asset mapping for @ur-wesley/oort.
 // Release assets (built by .github/workflows/release-cli.yml):
 //   oort-linux-x64        (linux / x64)
 //   oort-darwin-arm64     (macOS Apple Silicon only)

@@ -1,5 +1,5 @@
 {
-  "name": "@ur-wesley/serverless",
+  "name": "@ur-wesley/oort",
   "version": "0.1.1",
   "description": "Oort binary platform CLI — installs the prebuilt oort binary for your platform from GitHub Releases.",
   "license": "MIT",
@@ -20,8 +20,8 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ur-wesley/serverless.git",
+    "url": "git+https://github.com/ur-wesley/oort.git",
     "directory": "npm"
   },
-  "homepage": "https://github.com/ur-wesley/serverless#readme"
+  "homepage": "https://github.com/ur-wesley/oort#readme"
 }

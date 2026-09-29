@@ -1,7 +1,7 @@
 {
-  "name": "@ur-wesley/serverless-sdk",
+  "name": "@ur-wesley/oort-sdk",
   "version": "0.1.1",
-  "description": "TypeScript SDK for the serverless binary platform — handler ABI (GET /healthz, POST /invoke) plus sidecar Env client (KV, blobs, queue, logs, intercom).",
+  "description": "TypeScript SDK for Oort — handler ABI (GET /healthz, POST /invoke) plus sidecar Env client (KV, blobs, queue, logs, intercom).",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -28,10 +28,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ur-wesley/serverless.git",
+    "url": "git+https://github.com/ur-wesley/oort.git",
     "directory": "sdks/ts"
   },
-  "homepage": "https://github.com/ur-wesley/serverless#readme",
+  "homepage": "https://github.com/ur-wesley/oort#readme",
   "publishConfig": {
     "access": "public"
   },

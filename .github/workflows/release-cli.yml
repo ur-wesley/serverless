@@ -48,6 +48,12 @@ jobs:
             echo "::error::sdks/ts/package.json $SDK_VERSION != root package.json $PKG_VERSION. SDKs release in lockstep — bump them together."
             exit 1
           fi
+          RUST_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' sdks/rust/Cargo.toml | head -1)"
+          echo "sdks/rust version: $RUST_VERSION"
+          if [[ "$RUST_VERSION" != "$PKG_VERSION" ]]; then
+            echo "::error::sdks/rust/Cargo.toml $RUST_VERSION != root package.json $PKG_VERSION. SDKs release in lockstep — bump them together."
+            exit 1
+          fi
           if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
             TAG_VERSION="${GITHUB_REF_NAME#v}"
             if [[ "$TAG_VERSION" != "$PKG_VERSION" ]]; then
@@ -102,6 +108,16 @@ jobs:
           npm run check
           npm run build
 
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Test + lint Rust SDK
+        working-directory: sdks/rust
+        run: |
+          cargo test --locked
+          cargo clippy --all-targets -- -D warnings
+
   release:
     # Publish to GitHub Releases + npm only on version tags.
     # workflow_dispatch runs build above as a dry-run without publishing.
@@ -149,13 +165,13 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Publish @ur-wesley/serverless to npm
+      - name: Publish @ur-wesley/oort to npm
         working-directory: npm
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish @ur-wesley/serverless-sdk to npm
+      - name: Publish @ur-wesley/oort-sdk to npm
         working-directory: sdks/ts
         run: |
           npm ci

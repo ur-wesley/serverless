@@ -7,7 +7,7 @@ const fs = require("fs");
 const path = require("path");
 const { assetName, unsupportedMessage } = require("./lib/asset");
 
-const REPO = process.env.ACTIONS_CLI_GITHUB_REPO || "ur-wesley/serverless";
+const REPO = process.env.ACTIONS_CLI_GITHUB_REPO || "ur-wesley/oort";
 
 async function main() {
   const asset = assetName();
@@ -18,13 +18,13 @@ async function main() {
   const dir = path.join(__dirname, "binaries");
   const dest = path.join(dir, asset);
 
-  if (fs.existsSync(dest) && !process.env.SERVERLESS_FORCE_DOWNLOAD) {
-    console.log(`[serverless] binary already present: ${dest}`);
+  if (fs.existsSync(dest) && !(process.env.OORT_FORCE_DOWNLOAD || process.env.SERVERLESS_FORCE_DOWNLOAD)) {
+    console.log(`[oort] binary already present: ${dest}`);
     return;
   }
 
   const base = `https://github.com/${REPO}/releases/download/v${version}`;
-  console.log(`[serverless] downloading ${asset} v${version} ...`);
+  console.log(`[oort] downloading ${asset} v${version} ...`);
   fs.mkdirSync(dir, { recursive: true });
 
   const binRes = await fetch(`${base}/${asset}`);
@@ -48,22 +48,22 @@ async function main() {
         if (expected !== actual) {
           throw new Error(`Checksum mismatch for ${asset}: expected ${expected}, got ${actual}.`);
         }
-        console.log("[serverless] checksum ok");
+        console.log("[oort] checksum ok");
       }
     }
   } catch (err) {
     if (err && err.message && err.message.startsWith("Checksum mismatch")) throw err;
-    console.warn(`[serverless] warning: checksum check skipped (${err.message})`);
+    console.warn(`[oort] warning: checksum check skipped (${err.message})`);
   }
 
   fs.writeFileSync(dest, buf);
   if (process.platform !== "win32") {
     fs.chmodSync(dest, 0o755);
   }
-  console.log(`[serverless] installed to ${dest}`);
+  console.log(`[oort] installed to ${dest}`);
 }
 
 main().catch((err) => {
-  console.error(`[serverless] install failed: ${err.message}`);
+  console.error(`[oort] install failed: ${err.message}`);
   process.exitCode = 1;
 });
