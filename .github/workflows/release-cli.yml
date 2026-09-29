@@ -19,13 +19,13 @@ jobs:
         include:
           - goos: linux
             goarch: amd64
-            asset: serverless-linux-x64
+            asset: oort-linux-x64
           - goos: darwin
             goarch: arm64
-            asset: serverless-darwin-arm64
+            asset: oort-darwin-arm64
           - goos: windows
             goarch: amd64
-            asset: serverless-win-x64.exe
+            asset: oort-win-x64.exe
     steps:
       - uses: actions/checkout@v4
         with:
@@ -69,7 +69,7 @@ jobs:
           # Tests run on the host; only the binary build is cross-compiled
           # (running go test under GOOS/GOARCH yields exec format error).
           go test ./internal/version/ ./internal/cli/ 2>/dev/null || go test ./internal/version/
-          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -trimpath -ldflags "-s -w" -o "dist/${{ matrix.asset }}" ./cmd/actions
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -trimpath -ldflags "-s -w" -o "dist/${{ matrix.asset }}" ./cmd/oort
           ls -la dist/
 
       - uses: actions/upload-artifact@v4
@@ -123,8 +123,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x dist/serverless-linux-x64 dist/serverless-darwin-arm64 || true
-          (cd dist && sha256sum serverless-linux-x64 serverless-darwin-arm64 serverless-win-x64.exe > CHECKSUMS.txt)
+          chmod +x dist/oort-linux-x64 dist/oort-darwin-arm64 || true
+          (cd dist && sha256sum oort-linux-x64 oort-darwin-arm64 oort-win-x64.exe > CHECKSUMS.txt)
           cat dist/CHECKSUMS.txt
           PKG_VERSION="$(node -p "require('./package.json').version")"
           npm --prefix npm version "$PKG_VERSION" --no-git-tag-version --allow-same-version
@@ -138,9 +138,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/serverless-linux-x64
-            dist/serverless-darwin-arm64
-            dist/serverless-win-x64.exe
+            dist/oort-linux-x64
+            dist/oort-darwin-arm64
+            dist/oort-win-x64.exe
             dist/CHECKSUMS.txt
           generate_release_notes: true
 

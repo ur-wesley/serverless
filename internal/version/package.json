@@ -1,6 +1,6 @@
 {
-  "name": "actions",
+  "name": "oort",
   "version": "0.1.1",
   "private": true,
-  "description": "Single-node serverless binary platform — version in this file is the source of truth for version display."
+  "description": "Oort — single-node binary platform — version in this file is the source of truth for version display."
 }

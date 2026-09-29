@@ -1,18 +1,18 @@
 # @ur-wesley/serverless
 
-Prebuilt `actions` CLI (serverless binary platform) — downloads the matching
+Prebuilt `oort` CLI (Oort binary platform) — downloads the matching
 binary from GitHub Releases on install.
 
 ```sh
 npm i -g @ur-wesley/serverless
-actions --help
+oort --help
 ```
 
 Supported: `linux/x64`, `darwin/arm64` (Apple Silicon only), `win32/x64`.
 Intel Macs and ARM Linux are not shipped — build from source instead:
 
 ```sh
-go build -o actions ./cmd/actions
+go build -o oort ./cmd/oort
 ```
 
 Version tracks the repo-root `package.json` (source of truth). Binaries come

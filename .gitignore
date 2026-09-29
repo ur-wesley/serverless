@@ -1,5 +1,6 @@
 /controlplane
 /actions
+/oort
 *.db
 *.db-wal
 *.db-shm
